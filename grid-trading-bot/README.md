@@ -149,6 +149,7 @@ Replit:
 - `/grids` — list all grids with quick pause/resume/stop buttons
 - `/positions` — all currently open positions across all grids
 - `/profit` — realized profit per grid and in total
+- `/summary` — today's P&L, lifetime profit, and active grid standings (on demand)
 - `/logs` — most recent log entries
 
 **Configuration**
@@ -188,6 +189,9 @@ i.e. once every 24 hours). Set it lower (e.g. `3600` for hourly) if you want
 more frequent check-ins. This runs as its own background task in `main.py`
 and never blocks or crashes the rest of the bot — failures are logged and
 retried on the next cycle.
+
+You can also pull the same report on demand at any time with `/summary`
+(no need to wait for the scheduled push).
 
 ## Recovery after restart
 

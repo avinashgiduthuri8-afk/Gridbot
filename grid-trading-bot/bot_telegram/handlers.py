@@ -6,6 +6,7 @@ from telegram import Update
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
 from bot_telegram.formatters import (
+    format_daily_summary,
     format_grid_list,
     format_grid_summary,
     format_logs,
@@ -15,6 +16,7 @@ from bot_telegram.formatters import (
 )
 from bot_telegram.keyboards import grid_action_keyboard, main_menu_keyboard
 from trading.grid_manager import GridManagerError
+from utils.helpers import now_iso
 from utils.logger import get_logger
 
 log = get_logger("telegram")
@@ -31,6 +33,7 @@ HELP_TEXT = (
     "/grids — list all grids\n"
     "/positions — list open positions\n"
     "/profit — realized profit summary\n"
+    "/summary — today's P&amp;L, lifetime profit, and grid standings\n"
     "/logs — recent log entries\n\n"
     "<b>Configuration</b>\n"
     "/settings — view saved per-coin settings\n"
@@ -105,6 +108,15 @@ def register_handlers(app, app_context: "BotAppContext") -> None:
         grids = await app_context.repos.grids.list_all()
         total = await app_context.repos.trade_history.total_realized_pnl()
         await update.message.reply_text(format_profit_summary(grids, total), parse_mode="HTML")
+
+    @authorized
+    async def summary_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        today = now_iso()[:10]
+        daily_stats = await app_context.repos.daily_stats.get(today)
+        active_grids = await app_context.repos.grids.list_by_status(["active", "paused"])
+        lifetime_realized = await app_context.repos.trade_history.total_realized_pnl()
+        text = format_daily_summary(today, daily_stats, active_grids, lifetime_realized)
+        await update.message.reply_text(text, parse_mode="HTML")
 
     @authorized
     async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -241,6 +253,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:
     app.add_handler(CommandHandler("grids", grids_cmd))
     app.add_handler(CommandHandler("positions", positions_cmd))
     app.add_handler(CommandHandler("profit", profit_cmd))
+    app.add_handler(CommandHandler("summary", summary_cmd))
     app.add_handler(CommandHandler("settings", settings_cmd))
     app.add_handler(CommandHandler("logs", logs_cmd))
     app.add_handler(CommandHandler("stopgrid", stopgrid_cmd))
