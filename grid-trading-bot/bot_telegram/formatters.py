@@ -86,6 +86,22 @@ def format_daily_summary(
     return "\n".join(lines)
 
 
+def format_trade_history(symbol: str, trades: list[dict]) -> str:
+    if not trades:
+        return f"No trade history for {symbol} yet."
+    lines = [f"<b>Recent Trades — {symbol}</b>\n"]
+    for t in trades:
+        side_label = t["side"].upper()
+        pnl = t["pnl"]
+        pnl_part = f", pnl ₹{pnl:,.2f}" if t["side"].lower() == "sell" else ""
+        lines.append(
+            f"• [{t['executed_at'][:19].replace('T', ' ')}] {side_label} "
+            f"{t['quantity']} @ ₹{t['price']:,.2f}{pnl_part} "
+            f"(grid <code>{t['grid_id']}</code>)"
+        )
+    return "\n".join(lines)
+
+
 def format_logs(logs: list[dict]) -> str:
     if not logs:
         return "No recent log entries."

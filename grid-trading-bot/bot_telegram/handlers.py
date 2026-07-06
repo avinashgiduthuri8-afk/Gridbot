@@ -13,6 +13,7 @@ from bot_telegram.formatters import (
     format_positions,
     format_profit_summary,
     format_settings,
+    format_trade_history,
 )
 from bot_telegram.keyboards import grid_action_keyboard, main_menu_keyboard
 from trading.grid_manager import GridManagerError
@@ -34,6 +35,7 @@ HELP_TEXT = (
     "/positions — list open positions\n"
     "/profit — realized profit summary\n"
     "/summary — today's P&amp;L, lifetime profit, and grid standings\n"
+    "/history &lt;symbol&gt; — recent buy/sell fills for a coin\n"
     "/logs — recent log entries\n\n"
     "<b>Configuration</b>\n"
     "/settings — view saved per-coin settings\n"
@@ -117,6 +119,15 @@ def register_handlers(app, app_context: "BotAppContext") -> None:
         lifetime_realized = await app_context.repos.trade_history.total_realized_pnl()
         text = format_daily_summary(today, daily_stats, active_grids, lifetime_realized)
         await update.message.reply_text(text, parse_mode="HTML")
+
+    @authorized
+    async def history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not context.args:
+            await update.message.reply_text("Usage: /history <symbol>")
+            return
+        symbol = context.args[0].upper()
+        trades = await app_context.repos.trade_history.list_for_symbol(symbol, limit=20)
+        await update.message.reply_text(format_trade_history(symbol, trades), parse_mode="HTML")
 
     @authorized
     async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -254,6 +265,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:
     app.add_handler(CommandHandler("positions", positions_cmd))
     app.add_handler(CommandHandler("profit", profit_cmd))
     app.add_handler(CommandHandler("summary", summary_cmd))
+    app.add_handler(CommandHandler("history", history_cmd))
     app.add_handler(CommandHandler("settings", settings_cmd))
     app.add_handler(CommandHandler("logs", logs_cmd))
     app.add_handler(CommandHandler("stopgrid", stopgrid_cmd))

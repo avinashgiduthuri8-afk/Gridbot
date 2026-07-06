@@ -150,6 +150,7 @@ Replit:
 - `/positions` — all currently open positions across all grids
 - `/profit` — realized profit per grid and in total
 - `/summary` — today's P&L, lifetime profit, and active grid standings (on demand)
+- `/history <symbol>` — most recent buy/sell fills for a coin, with per-sell P&L and originating grid
 - `/logs` — most recent log entries
 
 **Configuration**
