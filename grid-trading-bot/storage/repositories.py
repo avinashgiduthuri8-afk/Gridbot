@@ -354,6 +354,13 @@ class TradeHistoryRepository:
         rows = await cur.fetchall()
         return [_row_to_dict(r) for r in rows]
 
+    async def list_all(self) -> list[dict[str, Any]]:
+        cur = await self._db.connection.execute(
+            "SELECT * FROM trade_history ORDER BY executed_at ASC"
+        )
+        rows = await cur.fetchall()
+        return [_row_to_dict(r) for r in rows]
+
     async def total_realized_pnl(self) -> float:
         cur = await self._db.connection.execute("SELECT COALESCE(SUM(pnl), 0) AS total FROM trade_history")
         row = await cur.fetchone()

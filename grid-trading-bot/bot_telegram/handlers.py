@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from telegram import Update
+import csv
+import io
+
+from telegram import InputFile, Update
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
 from bot_telegram.formatters import (
@@ -36,6 +39,7 @@ HELP_TEXT = (
     "/profit — realized profit summary\n"
     "/summary — today's P&amp;L, lifetime profit, and grid standings\n"
     "/history &lt;symbol&gt; — recent buy/sell fills for a coin\n"
+    "/export — download full trade history as a CSV file\n"
     "/logs — recent log entries\n\n"
     "<b>Configuration</b>\n"
     "/settings — view saved per-coin settings\n"
@@ -128,6 +132,30 @@ def register_handlers(app, app_context: "BotAppContext") -> None:
         symbol = context.args[0].upper()
         trades = await app_context.repos.trade_history.list_for_symbol(symbol, limit=20)
         await update.message.reply_text(format_trade_history(symbol, trades), parse_mode="HTML")
+
+    @authorized
+    async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        trades = await app_context.repos.trade_history.list_all()
+        if not trades:
+            await update.message.reply_text("No trade history to export yet.")
+            return
+
+        buffer = io.StringIO()
+        fieldnames = [
+            "trade_id", "grid_id", "order_id", "symbol", "side",
+            "price", "quantity", "fee", "pnl", "executed_at",
+        ]
+        writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+        writer.writeheader()
+        for trade in trades:
+            writer.writerow({key: trade.get(key, "") for key in fieldnames})
+
+        csv_bytes = buffer.getvalue().encode("utf-8")
+        filename = f"trade_history_{now_iso()[:10]}.csv"
+        await update.message.reply_document(
+            document=InputFile(io.BytesIO(csv_bytes), filename=filename),
+            caption=f"Exported {len(trades)} trade(s).",
+        )
 
     @authorized
     async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -266,6 +294,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:
     app.add_handler(CommandHandler("profit", profit_cmd))
     app.add_handler(CommandHandler("summary", summary_cmd))
     app.add_handler(CommandHandler("history", history_cmd))
+    app.add_handler(CommandHandler("export", export_cmd))
     app.add_handler(CommandHandler("settings", settings_cmd))
     app.add_handler(CommandHandler("logs", logs_cmd))
     app.add_handler(CommandHandler("stopgrid", stopgrid_cmd))
