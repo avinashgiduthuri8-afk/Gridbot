@@ -173,6 +173,22 @@ before every grid start and order placement:
 An emergency-stop switch also exists in code (`RiskManager.trigger_emergency_stop`)
 that immediately blocks all new grid starts and order placements.
 
+## Daily summary notifications
+
+In addition to real-time push notifications for every grid lifecycle event
+(grid started/stopped/paused, order filled, range breach, risk block, errors),
+the bot pushes a periodic Telegram summary covering:
+
+- Today's realized P&L and number of completed trades
+- Lifetime realized profit across all grids
+- Count of active/paused grids, with a per-grid profit/cycle breakdown
+
+Controlled by `DAILY_SUMMARY_INTERVAL_SECONDS` in `.env` (default `86400`,
+i.e. once every 24 hours). Set it lower (e.g. `3600` for hourly) if you want
+more frequent check-ins. This runs as its own background task in `main.py`
+and never blocks or crashes the rest of the bot — failures are logged and
+retried on the next cycle.
+
 ## Recovery after restart
 
 On every startup, `trading/recovery.py` runs before the Telegram bot

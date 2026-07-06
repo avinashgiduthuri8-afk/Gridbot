@@ -60,6 +60,32 @@ def format_settings(coin_configs: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def format_daily_summary(
+    date: str,
+    daily_stats: dict | None,
+    active_grids: list[dict],
+    lifetime_realized: float,
+) -> str:
+    today_pnl = daily_stats["realized_pnl"] if daily_stats else 0.0
+    today_trades = daily_stats["trades_count"] if daily_stats else 0
+    pnl_emoji = "📈" if today_pnl >= 0 else "📉"
+
+    lines = [
+        f"<b>Date:</b> {date}",
+        f"{pnl_emoji} <b>Today's realized P&amp;L:</b> ₹{today_pnl:,.2f} ({today_trades} trade(s))",
+        f"<b>Lifetime realized profit:</b> ₹{lifetime_realized:,.2f}",
+        f"<b>Active/paused grids:</b> {len(active_grids)}",
+    ]
+    if active_grids:
+        lines.append("")
+        for g in active_grids:
+            lines.append(
+                f"• <b>{g['symbol']}</b> ({g['status']}) — "
+                f"profit ₹{g['realized_profit']:,.2f}, {g['completed_cycles']} cycle(s)"
+            )
+    return "\n".join(lines)
+
+
 def format_logs(logs: list[dict]) -> str:
     if not logs:
         return "No recent log entries."

@@ -15,6 +15,7 @@ import signal
 from telegram import Bot
 
 from bot_telegram.bot import BotAppContext, build_application
+from bot_telegram.formatters import format_daily_summary
 from config.settings import ConfigError, load_settings
 from exchange.coindcx import CoinDCXClient
 from notifications.notifier import Notifier
@@ -26,6 +27,7 @@ from trading.order_manager import OrderManager
 from trading.order_monitor import OrderMonitor
 from trading.position_manager import PositionManager
 from trading.recovery import RecoveryManager
+from utils.helpers import now_iso
 from utils.logger import get_logger, setup_logging
 
 log = get_logger("trading")
@@ -40,6 +42,23 @@ async def run_range_check_loop(grid_manager: GridManager, repos: Repositories, i
         except Exception:  # noqa: BLE001
             log.exception("Range check loop failed")
         await asyncio.sleep(interval)
+
+
+async def run_daily_summary_loop(notifier: Notifier, repos: Repositories, interval: int) -> None:
+    """Periodically push a Telegram summary of today's realized P&L, trade
+    count, and active grid standings, on the cadence configured via
+    DAILY_SUMMARY_INTERVAL_SECONDS (default: once every 24 hours)."""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            today = now_iso()[:10]
+            daily_stats = await repos.daily_stats.get(today)
+            active_grids = await repos.grids.list_by_status(["active", "paused"])
+            lifetime_realized = await repos.trade_history.total_realized_pnl()
+            summary_text = format_daily_summary(today, daily_stats, active_grids, lifetime_realized)
+            await notifier.daily_summary(summary_text)
+        except Exception:  # noqa: BLE001 - never let the scheduler die
+            log.exception("Daily summary loop failed")
 
 
 async def async_main() -> None:
@@ -86,6 +105,9 @@ async def async_main() -> None:
     range_check_task = asyncio.create_task(
         run_range_check_loop(grid_manager, repos, settings.price_poll_interval_seconds)
     )
+    daily_summary_task = asyncio.create_task(
+        run_daily_summary_loop(notifier, repos, settings.daily_summary_interval_seconds)
+    )
 
     stop_event = asyncio.Event()
 
@@ -114,6 +136,7 @@ async def async_main() -> None:
         await application.stop()
 
     range_check_task.cancel()
+    daily_summary_task.cancel()
     await order_monitor.stop()
     await exchange.close()
     await db.close()
