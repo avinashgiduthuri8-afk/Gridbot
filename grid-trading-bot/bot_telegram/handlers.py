@@ -19,7 +19,7 @@ from bot_telegram.formatters import (
     format_settings,
     format_trade_history,
 )
-from bot_telegram.keyboards import grid_action_keyboard, main_menu_keyboard
+from bot_telegram.keyboards import clear_emergency_keyboard, grid_action_keyboard, main_menu_keyboard
 from trading.grid_manager import GridManagerError
 from utils.helpers import now_iso
 from utils.logger import get_logger
@@ -43,6 +43,9 @@ HELP_TEXT = (
     "/export — download full trade history as a CSV file\n"
     "/backup — download the raw SQLite database file\n"
     "/logs — recent log entries\n\n"
+    "<b>Emergency control</b>\n"
+    "/emergencystop — immediately halt all new trades and grid starts\n"
+    "/clearemergency — re-enable trading (requires confirmation)\n\n"
     "<b>Configuration</b>\n"
     "/settings — view saved per-coin settings\n"
     "/setinvestment &lt;symbol&gt; &lt;amount&gt; — update investment per grid order\n"
@@ -282,6 +285,61 @@ def register_handlers(app, app_context: "BotAppContext") -> None:
         )
         await update.message.reply_text(f"Range for {symbol} updated to ₹{lower_f:,.2f}-₹{upper_f:,.2f}.")
 
+    @authorized
+    async def emergencystop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if app_context.risk_manager.emergency_stopped:
+            await update.message.reply_text(
+                "🚨 Emergency stop is already active. No new trades or grids are permitted.\n"
+                "Use /clearemergency to re-enable trading."
+            )
+            return
+        app_context.risk_manager.trigger_emergency_stop()
+        log.warning("Emergency stop triggered by user %s", update.effective_user.id)
+        await update.message.reply_text(
+            "🚨 <b>EMERGENCY STOP ACTIVATED</b>\n\n"
+            "All new grid starts and order placements are now blocked.\n"
+            "Running grids will not place any further orders.\n\n"
+            "Use /clearemergency to re-enable trading when you are ready.",
+            parse_mode="HTML",
+        )
+        await app_context.notifier.send(
+            "🚨 Emergency stop activated via Telegram. All new trades are blocked."
+        )
+
+    @authorized
+    async def clearemergency_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not app_context.risk_manager.emergency_stopped:
+            await update.message.reply_text("Emergency stop is not active — trading is already enabled.")
+            return
+        await update.message.reply_text(
+            "⚠️ <b>Re-enable trading?</b>\n\n"
+            "This will lift the emergency stop and allow new trades and grid starts.\n"
+            "Are you sure?",
+            parse_mode="HTML",
+            reply_markup=clear_emergency_keyboard(),
+        )
+
+    async def emergency_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if not app_context.is_authorized(query.from_user.id):
+            await query.answer("Not authorized.", show_alert=True)
+            return
+        await query.answer()
+        action = query.data.split(":")[1]
+        if action == "clear":
+            app_context.risk_manager.clear_emergency_stop()
+            log.info("Emergency stop cleared by user %s", query.from_user.id)
+            await query.edit_message_text(
+                "✅ Emergency stop cleared. Trading is now re-enabled.\n\n"
+                "Paused grids will not auto-resume — use /resume <grid_id> to restart each one manually.",
+                parse_mode="HTML",
+            )
+            await app_context.notifier.send(
+                "✅ Emergency stop cleared via Telegram. Trading is re-enabled."
+            )
+        elif action == "cancel":
+            await query.edit_message_text("Cancelled. Emergency stop remains active.")
+
     async def grid_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         if not app_context.is_authorized(query.from_user.id):
@@ -320,4 +378,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:
     app.add_handler(CommandHandler("setinvestment", setinvestment_cmd))
     app.add_handler(CommandHandler("setlevels", setlevels_cmd))
     app.add_handler(CommandHandler("setrange", setrange_cmd))
+    app.add_handler(CommandHandler("emergencystop", emergencystop_cmd))
+    app.add_handler(CommandHandler("clearemergency", clearemergency_cmd))
+    app.add_handler(CallbackQueryHandler(emergency_callback, pattern="^emergency:"))
     app.add_handler(CallbackQueryHandler(grid_action_callback, pattern="^grid_action:"))

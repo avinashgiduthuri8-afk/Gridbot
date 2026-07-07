@@ -48,6 +48,17 @@ def grid_action_keyboard(grid_id: str, status: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows) if rows else InlineKeyboardMarkup([[]])
 
 
+def clear_emergency_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ Yes, re-enable trading", callback_data="emergency:clear"),
+                InlineKeyboardButton("❌ Cancel", callback_data="emergency:cancel"),
+            ]
+        ]
+    )
+
+
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [

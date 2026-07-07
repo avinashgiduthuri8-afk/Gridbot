@@ -155,6 +155,10 @@ Replit:
 - `/backup` — download the raw SQLite database file (all grids, configs, and history in one file)
 - `/logs` — most recent log entries
 
+**Emergency control**
+- `/emergencystop` — immediately block all new trades and grid starts; sends a push notification to confirm activation
+- `/clearemergency` — re-enable trading after an emergency stop (requires inline confirmation button press to prevent accidents); paused grids must be manually resumed with `/resume`
+
 **Configuration**
 - `/settings` — view saved per-coin defaults
 - `/setinvestment <symbol> <amount>` — change investment per grid order for future grids
