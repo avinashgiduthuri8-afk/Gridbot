@@ -252,3 +252,46 @@ def format_logs(logs: list[dict]) -> str:
             f"[{ts}] {entry['level']} ({entry['channel']}): {entry['message']}"
         )
     return "\n".join(lines)
+
+
+def format_monitor_status(status: "MonitorStatus") -> str:  # noqa: F821
+    """Format the /monitor command response."""
+    from storage.repositories import VALID_MONITOR_INTERVALS
+
+    api_emoji = "✅" if status.api_ok else "⚠️"
+    api_label = "OK" if status.api_ok else f"DEGRADED ({status.consecutive_failures} consecutive failure(s))"
+
+    last_str = (
+        status.last_refresh.strftime("%H:%M:%S UTC")
+        if status.last_refresh
+        else "Not yet refreshed"
+    )
+    next_str = (
+        status.next_refresh.strftime("%H:%M:%S UTC")
+        if status.next_refresh
+        else "—"
+    )
+
+    if status.monitored_symbols:
+        coins_list = "\n".join(f"  • {sym}" for sym in sorted(status.monitored_symbols))
+    else:
+        coins_list = "  (none — no active grids)"
+
+    allowed = " / ".join(f"{v}s" for v in VALID_MONITOR_INTERVALS)
+
+    lines = [
+        "<b>📡 Price Monitor Status</b>\n",
+        f"Refresh interval:   <b>{status.interval_seconds}s</b>  (allowed: {allowed})",
+        f"Active coins:       <b>{len(status.monitored_symbols)}</b>",
+        f"Total cycles run:   {status.total_cycles}",
+        f"Last refresh:       {last_str}",
+        f"Next refresh:       {next_str}",
+        f"API status:         {api_emoji} {api_label}",
+        "",
+        "<b>Monitored coins:</b>",
+        coins_list,
+        "",
+        "Use <code>/monitor &lt;seconds&gt;</code> to change the interval.",
+        f"Example: <code>/monitor 10</code>",
+    ]
+    return "\n".join(lines)

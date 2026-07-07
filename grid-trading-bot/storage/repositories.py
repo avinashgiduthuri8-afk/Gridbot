@@ -15,6 +15,9 @@ from storage.models import DCAGridRecord, OrderRecord, TradeHistoryRecord
 from utils.helpers import now_iso
 from utils.logger import get_logger
 
+VALID_MONITOR_INTERVALS = (2, 5, 10, 15, 30)
+DEFAULT_MONITOR_INTERVAL = 5
+
 log = get_logger("database")
 
 
@@ -332,6 +335,57 @@ class LogRepository:
 
 
 # ---------------------------------------------------------------------------
+# Monitor settings table
+# ---------------------------------------------------------------------------
+
+
+class MonitorSettingsRepository:
+    """Persists key-value pairs for the price monitor (interval, etc.)."""
+
+    _KEY_INTERVAL = "price_monitor_interval"
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def get_interval(self) -> int | None:
+        """Return the stored interval, or None if never explicitly set.
+
+        Callers should fall back to their own default when None is returned
+        so that environment-variable configuration is honoured on first start.
+        """
+        cur = await self._db.connection.execute(
+            "SELECT value FROM monitor_settings WHERE key = ?",
+            (self._KEY_INTERVAL,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        try:
+            value = int(row["value"])
+        except (ValueError, KeyError):
+            return None
+        if value not in VALID_MONITOR_INTERVALS:
+            return None
+        return value
+
+    async def set_interval(self, seconds: int) -> None:
+        """Persist the monitor interval (must be one of VALID_MONITOR_INTERVALS)."""
+        if seconds not in VALID_MONITOR_INTERVALS:
+            raise ValueError(
+                f"Invalid monitor interval {seconds}s. "
+                f"Allowed: {', '.join(str(v) for v in VALID_MONITOR_INTERVALS)}s"
+            )
+        await self._db.connection.execute(
+            """INSERT INTO monitor_settings (key, value, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                              updated_at = excluded.updated_at""",
+            (self._KEY_INTERVAL, str(seconds), now_iso()),
+        )
+        await self._db.connection.commit()
+
+
+# ---------------------------------------------------------------------------
 # Container
 # ---------------------------------------------------------------------------
 
@@ -346,3 +400,4 @@ class Repositories:
         self.trade_history = TradeHistoryRepository(db)
         self.daily_stats = DailyStatsRepository(db)
         self.logs = LogRepository(db)
+        self.monitor_settings = MonitorSettingsRepository(db)

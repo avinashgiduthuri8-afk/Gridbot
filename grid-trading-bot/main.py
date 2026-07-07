@@ -1,7 +1,8 @@
 """Application entrypoint for the Manual DCA Grid Trading Bot.
 
 Wires together configuration, database, exchange client, the DCA trading
-engine, the order monitor, recovery, and the Telegram bot — then runs forever.
+engine, the order monitor, the price monitor, recovery, and the Telegram
+bot — then runs forever.
 
 Run with: python main.py
 """
@@ -27,29 +28,12 @@ from trading.alert_manager import AlertManager
 from trading.dca_manager import DCAManager
 from trading.order_manager import OrderManager
 from trading.order_monitor import OrderMonitor
+from trading.price_monitor import PriceMonitor
 from trading.recovery import RecoveryManager
 from utils.helpers import now_iso
 from utils.logger import get_logger, setup_logging
 
 log = get_logger("trading")
-
-
-async def run_price_trigger_loop(
-    dca_manager: DCAManager, repos: Repositories, interval: int
-) -> None:
-    """Poll active grids for dip-buy, profit-sell, and stop-loss triggers."""
-    while True:
-        try:
-            active_grids = await repos.grids.list_by_status(["active"])
-            for grid in active_grids:
-                try:
-                    ticker = await dca_manager._exchange.get_ticker(grid["symbol"])
-                    await dca_manager.check_grid_triggers(grid["grid_id"], ticker.last_price)
-                except Exception:  # noqa: BLE001
-                    log.exception("Price trigger check failed for grid %s", grid["grid_id"])
-        except Exception:  # noqa: BLE001
-            log.exception("Price trigger loop cycle failed")
-        await asyncio.sleep(interval)
 
 
 async def run_alert_check_loop(
@@ -155,6 +139,18 @@ async def async_main() -> None:
         poll_interval=settings.order_poll_interval_seconds,
     )
 
+    # Price Monitor — replaces the bare run_price_trigger_loop function.
+    # Load the persisted interval from SQLite (falls back to settings default
+    # if no interval has been set yet via /monitor).
+    price_monitor = PriceMonitor(
+        exchange=exchange,
+        repos=repos,
+        dca_manager=dca_manager,
+        notifier=notifier,
+        default_interval=settings.price_poll_interval_seconds,
+    )
+    await price_monitor.load_interval()
+
     app_context = BotAppContext(
         settings=settings,
         repos=repos,
@@ -163,16 +159,15 @@ async def async_main() -> None:
         risk_manager=risk_manager,
         notifier=notifier,
         alert_manager=alert_manager,
+        price_monitor=price_monitor,
     )
     application = build_application(app_context)
 
     await recovery_manager.recover()
 
     order_monitor.start()
+    price_monitor.start()
 
-    price_trigger_task = asyncio.create_task(
-        run_price_trigger_loop(dca_manager, repos, settings.price_poll_interval_seconds)
-    )
     daily_summary_task = asyncio.create_task(
         run_daily_summary_loop(notifier, repos, settings.daily_summary_interval_seconds)
     )
@@ -205,9 +200,9 @@ async def async_main() -> None:
         await application.updater.stop()
         await application.stop()
 
-    price_trigger_task.cancel()
     daily_summary_task.cancel()
     alert_task.cancel()
+    await price_monitor.stop()
     await order_monitor.stop()
     await exchange.close()
     await db.close()

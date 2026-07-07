@@ -137,6 +137,30 @@ class CoinDCXClient(ExchangeClient):
                 return Ticker(symbol=symbol, last_price=float(entry["last_price"]))
         raise ExchangeError(f"Symbol {symbol} not found in ticker response")
 
+    async def get_tickers_batch(self, symbols: set[str]) -> dict[str, "Ticker"]:
+        """Fetch all tickers in one request and return only the requested symbols.
+
+        CoinDCX /exchange/ticker always returns the full market list; we filter
+        client-side so callers never pay more than one HTTP round-trip regardless
+        of how many symbols are monitored.
+        """
+        if not symbols:
+            return {}
+        try:
+            data = await self._get_public("/exchange/ticker")
+        except Exception as exc:
+            log.warning("Batch ticker fetch failed: %s", exc)
+            return {}
+        result: dict[str, Ticker] = {}
+        for entry in data:
+            market = entry.get("market", "")
+            if market in symbols:
+                try:
+                    result[market] = Ticker(symbol=market, last_price=float(entry["last_price"]))
+                except (KeyError, ValueError, TypeError) as exc:
+                    log.warning("Bad ticker entry for %s: %s", market, exc)
+        return result
+
     async def get_market_info(self, symbol: str) -> MarketInfo:
         """Return precision and minimum-size rules for *symbol*.
 

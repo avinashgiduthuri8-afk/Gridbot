@@ -101,10 +101,17 @@ CREATE TABLE IF NOT EXISTS logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_logs_channel ON logs(channel);
+
+CREATE TABLE IF NOT EXISTS monitor_settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 _MIGRATION_STMTS = [
     "ALTER TABLE dca_grids ADD COLUMN mode TEXT NOT NULL DEFAULT 'real'",
+    # monitor_settings is created by SCHEMA above; no ALTER needed
 ]
 
 

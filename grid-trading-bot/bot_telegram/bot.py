@@ -19,6 +19,7 @@ from risk.risk_manager import RiskManager
 from storage.repositories import Repositories
 from trading.alert_manager import AlertManager
 from trading.dca_manager import DCAManager
+from trading.price_monitor import PriceMonitor
 from utils.logger import get_logger
 
 log = get_logger("telegram")
@@ -33,6 +34,7 @@ class BotAppContext:
     risk_manager: RiskManager
     notifier: Notifier
     alert_manager: AlertManager
+    price_monitor: PriceMonitor
 
     def is_authorized(self, user_id: int) -> bool:
         return self.settings.is_authorized(user_id)

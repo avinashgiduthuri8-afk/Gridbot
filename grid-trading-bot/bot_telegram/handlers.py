@@ -14,6 +14,7 @@ from bot_telegram.formatters import (
     format_grid_list,
     format_grid_summary,
     format_logs,
+    format_monitor_status,
     format_paper_grids,
     format_positions,
     format_profit_summary,
@@ -43,6 +44,8 @@ HELP_TEXT = (
     "/profit — realized profit summary per grid\n"
     "/summary — today's P&amp;L and active grid standings\n"
     "/history &lt;symbol&gt; — recent buy/sell fills for a coin\n"
+    "/monitor — price monitor status and active coins\n"
+    "/monitor &lt;seconds&gt; — change refresh interval (2/5/10/15/30)\n"
     "/export — download full trade history as CSV\n"
     "/backup — download raw SQLite database\n"
     "/logs — recent log entries\n\n"
@@ -200,6 +203,42 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
 
         text = format_paper_grids(all_grids, prices)
         await update.message.reply_text(text, parse_mode="HTML")
+
+    @authorized
+    async def monitor_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show price monitor status, or change the refresh interval."""
+        from storage.repositories import VALID_MONITOR_INTERVALS
+
+        if context.args:
+            # /monitor <seconds> — change the interval
+            raw = context.args[0].strip()
+            try:
+                seconds = int(raw)
+            except ValueError:
+                await update.message.reply_text(
+                    f"❌ Invalid interval <code>{raw}</code>.\n"
+                    f"Allowed: {', '.join(str(v) for v in VALID_MONITOR_INTERVALS)} seconds.",
+                    parse_mode="HTML",
+                )
+                return
+            try:
+                await app_context.price_monitor.set_interval(seconds)
+            except ValueError as exc:
+                await update.message.reply_text(f"❌ {exc}", parse_mode="HTML")
+                return
+            await update.message.reply_text(
+                f"✅ Price monitor interval updated to <b>{seconds}s</b>.\n"
+                "Change takes effect at the start of the next cycle.",
+                parse_mode="HTML",
+            )
+            return
+
+        # /monitor — show status
+        status = app_context.price_monitor.get_status()
+        await update.message.reply_text(
+            format_monitor_status(status),
+            parse_mode="HTML",
+        )
 
     @authorized
     async def logs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -441,6 +480,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
     app.add_handler(CommandHandler("profit", profit_cmd))
     app.add_handler(CommandHandler("summary", summary_cmd))
     app.add_handler(CommandHandler("history", history_cmd))
+    app.add_handler(CommandHandler("monitor", monitor_cmd))
     app.add_handler(CommandHandler("export", export_cmd))
     app.add_handler(CommandHandler("backup", backup_cmd))
     app.add_handler(CommandHandler("logs", logs_cmd))

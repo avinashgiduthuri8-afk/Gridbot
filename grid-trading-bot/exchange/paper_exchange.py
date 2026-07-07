@@ -34,6 +34,10 @@ class PaperExchangeClient(ExchangeClient):
     async def get_ticker(self, symbol: str) -> Ticker:
         return await self._real.get_ticker(symbol)
 
+    async def get_tickers_batch(self, symbols: set[str]) -> dict[str, Ticker]:
+        """Delegate batch fetch to the real exchange — prices are always live."""
+        return await self._real.get_tickers_batch(symbols)
+
     async def get_market_info(self, symbol: str) -> MarketInfo:
         return await self._real.get_market_info(symbol)
 

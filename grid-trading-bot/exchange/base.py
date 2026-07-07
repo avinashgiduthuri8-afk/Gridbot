@@ -69,6 +69,22 @@ class ExchangeClient(ABC):
     @abstractmethod
     async def get_ticker(self, symbol: str) -> Ticker: ...
 
+    async def get_tickers_batch(self, symbols: set[str]) -> dict[str, Ticker]:
+        """Fetch prices for multiple symbols in as few API calls as possible.
+
+        Default implementation calls get_ticker individually — subclasses
+        should override with a true batch request where the exchange supports it.
+        Returns a dict mapping each successfully fetched symbol to its Ticker.
+        Missing or failed symbols are simply absent from the result.
+        """
+        result: dict[str, Ticker] = {}
+        for sym in symbols:
+            try:
+                result[sym] = await self.get_ticker(sym)
+            except Exception:  # noqa: BLE001
+                pass
+        return result
+
     @abstractmethod
     async def get_balances(self) -> list[Balance]: ...
 
