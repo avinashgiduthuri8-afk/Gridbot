@@ -14,6 +14,7 @@ from bot_telegram.formatters import (
     format_grid_list,
     format_grid_summary,
     format_logs,
+    format_paper_grids,
     format_positions,
     format_profit_summary,
     format_trade_history,
@@ -36,6 +37,7 @@ HELP_TEXT = (
     "<b>Monitoring</b>\n"
     "/status — bot overview and wallet balance\n"
     "/balance — full real wallet breakdown with asset market values\n"
+    "/paper — paper-trade grids with simulated realized + unrealized P&amp;L\n"
     "/grids — list all grids with DCA state\n"
     "/positions — coins currently held across all grids\n"
     "/profit — realized profit summary per grid\n"
@@ -178,6 +180,25 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
                 pass
 
         text = format_wallet_balance(balances, prices)
+        await update.message.reply_text(text, parse_mode="HTML")
+
+    @authorized
+    async def paper_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        all_grids = await app_context.repos.grids.list_all()
+        paper_grids = [g for g in all_grids if g.get("mode") == "paper"]
+
+        prices: dict[str, float] = {}
+        for g in paper_grids:
+            if g["status"] in ("active", "paused") and g["total_quantity"] > 0:
+                symbol = g["symbol"]
+                if symbol not in prices:
+                    try:
+                        ticker = await app_context.exchange.get_ticker(symbol)
+                        prices[symbol] = ticker.last_price
+                    except Exception:  # noqa: BLE001
+                        pass
+
+        text = format_paper_grids(all_grids, prices)
         await update.message.reply_text(text, parse_mode="HTML")
 
     @authorized
@@ -414,6 +435,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("balance", balance_cmd))
+    app.add_handler(CommandHandler("paper", paper_cmd))
     app.add_handler(CommandHandler("grids", grids_cmd))
     app.add_handler(CommandHandler("positions", positions_cmd))
     app.add_handler(CommandHandler("profit", profit_cmd))

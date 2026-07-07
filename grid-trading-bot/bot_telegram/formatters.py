@@ -178,6 +178,70 @@ def format_trade_history(symbol: str, trades: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def format_paper_grids(grids: list[dict], prices: dict[str, float]) -> str:
+    """Summary of all paper-trade grids with realized and live unrealized P&L."""
+    paper = [g for g in grids if g.get("mode") == "paper"]
+    if not paper:
+        return (
+            "No paper trade grids found.\n\n"
+            "Use /newgrid and choose 🟢 <b>Paper Trade</b> to simulate a strategy risk-free."
+        )
+
+    total_realized = sum(g["realized_profit"] for g in paper)
+    total_unrealized = 0.0
+
+    lines = ["<b>🟢 Paper Trade Grids</b>\n"]
+
+    for g in paper:
+        status = g["status"]
+        emoji = _status_emoji(status)
+        symbol = g["symbol"]
+        qty = g["total_quantity"]
+        avg = g["average_entry_price"]
+        realized = g["realized_profit"]
+        cycles = g["completed_cycles"]
+
+        unrealized = 0.0
+        price_note = ""
+        if qty > 0 and avg > 0:
+            current = prices.get(symbol)
+            if current:
+                unrealized = (current - avg) * qty
+                total_unrealized += unrealized
+                direction = "📈" if unrealized >= 0 else "📉"
+                price_note = (
+                    f"\n    Current: ₹{current:,.2f} | "
+                    f"Unrealized: {direction} ₹{unrealized:+,.2f}"
+                )
+
+        realized_note = f"₹{realized:+,.2f}" if realized != 0 else "₹0.00"
+        lines.append(
+            f"{emoji} <b>{symbol}</b> — <code>{g['grid_id']}</code>\n"
+            f"    Status: {status.upper()} | Level: {g['current_level']}/{g['max_levels']}\n"
+            f"    Entry: ₹{g['entry_price']:,.2f} | Dip: {g['dip_percentage']}% | "
+            f"Profit: {g['profit_percentage']}%\n"
+            f"    Realized P&amp;L: {realized_note} ({cycles} sell cycle(s))"
+            + (
+                f"\n    Holding: {qty:.6f} coins @ avg ₹{avg:,.2f}"
+                + price_note
+                if qty > 0 else ""
+            )
+        )
+
+    lines.append("")
+    lines.append("<b>── Paper Portfolio Totals ──</b>")
+    lines.append(f"Realized P&amp;L:   ₹{total_realized:+,.2f}")
+    if total_unrealized != 0:
+        direction = "📈" if total_unrealized >= 0 else "📉"
+        lines.append(f"Unrealized P&amp;L: {direction} ₹{total_unrealized:+,.2f}")
+        lines.append(
+            f"Combined P&amp;L:   ₹{(total_realized + total_unrealized):+,.2f}"
+        )
+    lines.append(f"\nGrids: {len(paper)} total | {sum(1 for g in paper if g['status'] == 'active')} active")
+
+    return "\n".join(lines)
+
+
 def format_logs(logs: list[dict]) -> str:
     if not logs:
         return "No recent log entries."
