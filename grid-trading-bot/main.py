@@ -26,6 +26,7 @@ from trading.grid_manager import GridManager
 from trading.order_manager import OrderManager
 from trading.order_monitor import OrderMonitor
 from trading.position_manager import PositionManager
+from trading.alert_manager import AlertManager
 from trading.recovery import RecoveryManager
 from utils.helpers import now_iso
 from utils.logger import get_logger, setup_logging
@@ -61,6 +62,32 @@ async def run_daily_summary_loop(notifier: Notifier, repos: Repositories, interv
             log.exception("Daily summary loop failed")
 
 
+async def run_alert_check_loop(
+    alert_manager: AlertManager, exchange: CoinDCXClient, notifier: Notifier, interval: int
+) -> None:
+    """Poll live prices for any symbols with active alerts and fire
+    one-shot notifications when targets are crossed."""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            symbols = alert_manager.symbols_with_alerts()
+            for symbol in symbols:
+                try:
+                    ticker = await exchange.get_ticker(symbol)
+                    fired = alert_manager.check_and_fire(symbol, ticker.last_price)
+                    for alert in fired:
+                        direction_word = "reached" if alert.direction == "above" else "dropped to"
+                        await notifier.send(
+                            f"🔔 <b>Price Alert — {symbol}</b>\n"
+                            f"Target ₹{alert.target_price:,.2f} {direction_word}.\n"
+                            f"Current price: ₹{ticker.last_price:,.2f}"
+                        )
+                except Exception:  # noqa: BLE001
+                    log.exception("Alert price check failed for %s", symbol)
+        except Exception:  # noqa: BLE001
+            log.exception("Alert check loop failed")
+
+
 async def async_main() -> None:
     try:
         settings = load_settings()
@@ -92,10 +119,12 @@ async def async_main() -> None:
     grid_manager = GridManager(exchange, repos, order_manager, position_manager, risk_manager, notifier)
     recovery_manager = RecoveryManager(exchange, repos, notifier)
     order_monitor = OrderMonitor(repos, order_manager, grid_manager, settings.order_poll_interval_seconds)
+    alert_manager = AlertManager()
 
     app_context = BotAppContext(
         settings=settings, repos=repos, exchange=exchange,
-        grid_manager=grid_manager, risk_manager=risk_manager, notifier=notifier,
+        grid_manager=grid_manager, risk_manager=risk_manager,
+        notifier=notifier, alert_manager=alert_manager,
     )
     application = build_application(app_context)
 
@@ -107,6 +136,9 @@ async def async_main() -> None:
     )
     daily_summary_task = asyncio.create_task(
         run_daily_summary_loop(notifier, repos, settings.daily_summary_interval_seconds)
+    )
+    alert_task = asyncio.create_task(
+        run_alert_check_loop(alert_manager, exchange, notifier, settings.price_poll_interval_seconds)
     )
 
     stop_event = asyncio.Event()
@@ -137,6 +169,7 @@ async def async_main() -> None:
 
     range_check_task.cancel()
     daily_summary_task.cancel()
+    alert_task.cancel()
     await order_monitor.stop()
     await exchange.close()
     await db.close()

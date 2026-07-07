@@ -17,6 +17,7 @@ from risk.risk_manager import RiskManager
 from storage.repositories import Repositories
 from bot_telegram.conversations import build_startgrid_conversation
 from bot_telegram.handlers import register_handlers
+from trading.alert_manager import AlertManager
 from trading.grid_manager import GridManager
 from utils.logger import get_logger
 
@@ -31,6 +32,7 @@ class BotAppContext:
     grid_manager: GridManager
     risk_manager: RiskManager
     notifier: Notifier
+    alert_manager: AlertManager
 
     def is_authorized(self, user_id: int) -> bool:
         return self.settings.is_authorized(user_id)

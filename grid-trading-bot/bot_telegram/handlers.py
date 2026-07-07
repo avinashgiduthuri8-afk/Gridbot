@@ -46,6 +46,10 @@ HELP_TEXT = (
     "<b>Emergency control</b>\n"
     "/emergencystop — immediately halt all new trades and grid starts\n"
     "/clearemergency — re-enable trading (requires confirmation)\n\n"
+    "<b>Price alerts</b>\n"
+    "/alert &lt;symbol&gt; &lt;price&gt; — notify when a coin's price crosses a target\n"
+    "/alerts — list all active price alerts\n"
+    "/delalert &lt;symbol&gt; — cancel all alerts for a coin\n\n"
     "<b>Configuration</b>\n"
     "/settings — view saved per-coin settings\n"
     "/setinvestment &lt;symbol&gt; &lt;amount&gt; — update investment per grid order\n"
@@ -286,6 +290,61 @@ def register_handlers(app, app_context: "BotAppContext") -> None:
         await update.message.reply_text(f"Range for {symbol} updated to ₹{lower_f:,.2f}-₹{upper_f:,.2f}.")
 
     @authorized
+    async def alert_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if len(context.args) != 2:
+            await update.message.reply_text("Usage: /alert <symbol> <price>\nExample: /alert BTCINR 6500000")
+            return
+        symbol = context.args[0].upper()
+        try:
+            target = float(context.args[1].replace(",", ""))
+        except ValueError:
+            await update.message.reply_text("Price must be a number.")
+            return
+        try:
+            ticker = await app_context.exchange.get_ticker(symbol)
+            current = ticker.last_price
+        except Exception as exc:  # noqa: BLE001
+            await update.message.reply_text(f"Could not fetch current price for {symbol}: {exc}")
+            return
+        try:
+            direction = app_context.alert_manager.add(symbol, target, current, now_iso())
+        except ValueError as exc:
+            await update.message.reply_text(str(exc))
+            return
+        arrow = "📈" if direction == "above" else "📉"
+        await update.message.reply_text(
+            f"{arrow} Alert set for <b>{symbol}</b>\n"
+            f"Target: ₹{target:,.2f} ({direction})\n"
+            f"Current: ₹{current:,.2f}\n\n"
+            "You'll be notified the moment the price crosses this level.",
+            parse_mode="HTML",
+        )
+
+    @authorized
+    async def alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        alerts = app_context.alert_manager.list_all()
+        if not alerts:
+            await update.message.reply_text("No active price alerts.")
+            return
+        lines = ["<b>Active Price Alerts</b>\n"]
+        for a in alerts:
+            arrow = "📈" if a.direction == "above" else "📉"
+            lines.append(f"{arrow} <b>{a.symbol}</b> — ₹{a.target_price:,.2f} ({a.direction}) set {a.set_at[:10]}")
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+    @authorized
+    async def delalert_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not context.args:
+            await update.message.reply_text("Usage: /delalert <symbol>")
+            return
+        symbol = context.args[0].upper()
+        removed = app_context.alert_manager.delete(symbol)
+        if removed:
+            await update.message.reply_text(f"Removed {removed} alert(s) for {symbol}.")
+        else:
+            await update.message.reply_text(f"No active alerts found for {symbol}.")
+
+    @authorized
     async def emergencystop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if app_context.risk_manager.emergency_stopped:
             await update.message.reply_text(
@@ -378,6 +437,9 @@ def register_handlers(app, app_context: "BotAppContext") -> None:
     app.add_handler(CommandHandler("setinvestment", setinvestment_cmd))
     app.add_handler(CommandHandler("setlevels", setlevels_cmd))
     app.add_handler(CommandHandler("setrange", setrange_cmd))
+    app.add_handler(CommandHandler("alert", alert_cmd))
+    app.add_handler(CommandHandler("alerts", alerts_cmd))
+    app.add_handler(CommandHandler("delalert", delalert_cmd))
     app.add_handler(CommandHandler("emergencystop", emergencystop_cmd))
     app.add_handler(CommandHandler("clearemergency", clearemergency_cmd))
     app.add_handler(CallbackQueryHandler(emergency_callback, pattern="^emergency:"))
