@@ -175,15 +175,119 @@ class Notifier:
     # System events
     # ------------------------------------------------------------------
 
-    async def recovery_complete(self, active_count: int, reconciled: int) -> None:
-        if active_count > 0:
-            await self.send(
-                f"🔄 <b>Recovery Complete</b>\n"
-                f"Restored {active_count} active grid(s). "
-                f"Reconciled {reconciled} open order(s)."
-            )
+    # ------------------------------------------------------------------
+    # Order lifecycle events
+    # ------------------------------------------------------------------
+
+    async def order_submitted(
+        self,
+        symbol: str,
+        grid_id: str,
+        order_id: str,
+        side: str,
+        quantity: float,
+        price: float,
+        mode: str = "real",
+    ) -> None:
+        mode_tag = "🟢 Paper" if mode == "paper" else "🔴 Real"
+        side_emoji = "💸" if side == "buy" else "💰"
+        await self.send(
+            f"{side_emoji} <b>Order Submitted</b> [{mode_tag}]\n"
+            f"Coin: <b>{symbol}</b> | Grid: <code>{grid_id}</code>\n"
+            f"Order: <code>{order_id}</code> | Side: {side.upper()}\n"
+            f"Qty: {quantity:.6f} @ ₹{price:,.2f}"
+        )
+
+    async def partial_fill_received(
+        self,
+        symbol: str,
+        grid_id: str,
+        order_id: str,
+        side: str,
+        filled_qty: float,
+        total_qty: float,
+        fill_price: float,
+        mode: str = "real",
+    ) -> None:
+        remaining = total_qty - filled_qty
+        pct = (filled_qty / total_qty * 100) if total_qty > 0 else 0
+        mode_tag = "🟢 Paper" if mode == "paper" else "🔴 Real"
+        await self.send(
+            f"⏳ <b>Partial Fill</b> [{mode_tag}]\n"
+            f"Coin: <b>{symbol}</b> | Grid: <code>{grid_id}</code>\n"
+            f"Order: <code>{order_id}</code> | Side: {side.upper()}\n"
+            f"Filled: {filled_qty:.6f} of {total_qty:.6f} ({pct:.1f}%) @ ₹{fill_price:,.2f}\n"
+            f"Remaining: {remaining:.6f}"
+        )
+
+    async def order_cancelled(
+        self,
+        symbol: str,
+        grid_id: str,
+        order_id: str,
+        side: str,
+        mode: str = "real",
+    ) -> None:
+        mode_tag = "🟢 Paper" if mode == "paper" else "🔴 Real"
+        await self.send(
+            f"🚫 <b>Order Cancelled</b> [{mode_tag}]\n"
+            f"Coin: <b>{symbol}</b> | Grid: <code>{grid_id}</code>\n"
+            f"Order: <code>{order_id}</code> | Side: {side.upper()}"
+        )
+
+    async def order_failed(
+        self,
+        symbol: str,
+        grid_id: str,
+        order_id: str,
+        side: str,
+        reason: str,
+        mode: str = "real",
+    ) -> None:
+        mode_tag = "🟢 Paper" if mode == "paper" else "🔴 Real"
+        await self.send(
+            f"❌ <b>Order Failed</b> [{mode_tag}]\n"
+            f"Coin: <b>{symbol}</b> | Grid: <code>{grid_id}</code>\n"
+            f"Order: <code>{order_id}</code> | Side: {side.upper()}\n"
+            f"Reason: <code>{reason[:200]}</code>"
+        )
+
+    # ------------------------------------------------------------------
+    # System events
+    # ------------------------------------------------------------------
+
+    async def recovery_complete(
+        self,
+        active_count: int,
+        reconciled: int,
+        orphans_linked: int = 0,
+        fills_recovered: int = 0,
+    ) -> None:
+        if active_count > 0 or reconciled > 0:
+            lines = [
+                "🔄 <b>Recovery Complete</b>",
+                f"Active/paused grids: {active_count}",
+                f"Orders reconciled:   {reconciled}",
+            ]
+            if fills_recovered:
+                lines.append(f"Offline fills found: {fills_recovered}")
+            if orphans_linked:
+                lines.append(f"Orphan orders linked: {orphans_linked}")
+            await self.send("\n".join(lines))
         else:
             await self.send("🔄 <b>Recovery Complete</b>\nNo active grids to restore.")
+
+    async def sync_completed(self, synced: int, fills_found: int) -> None:
+        if fills_found > 0:
+            await self.send(
+                f"🔃 <b>Order Sync</b>\n"
+                f"Synced {synced} order(s). Detected {fills_found} new fill(s)."
+            )
+
+    async def sync_error(self, context: str, message: str) -> None:
+        await self.send(
+            f"⚠️ <b>Sync Error — {context}</b>\n<code>{message[:200]}</code>"
+        )
 
     async def error(self, context: str, message: str) -> None:
         await self.send(f"❌ <b>Error — {context}</b>\n<code>{message[:300]}</code>")

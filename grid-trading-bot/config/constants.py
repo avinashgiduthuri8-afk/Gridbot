@@ -23,13 +23,15 @@ class OrderSide(str, Enum):
 
 
 class OrderStatus(str, Enum):
-    PENDING = "pending"
-    OPEN = "open"
-    FILLED = "filled"
+    PENDING = "pending"            # local record created, exchange call not yet attempted
+    SUBMITTED = "submitted"        # exchange call in-flight (crash here → uncertain if landed)
+    OPEN = "open"                  # acknowledged by exchange, waiting to fill
     PARTIALLY_FILLED = "partially_filled"
+    FILLED = "filled"
     CANCELLED = "cancelled"
-    REJECTED = "rejected"
-    FAILED = "failed"
+    REJECTED = "rejected"          # exchange rejected immediately (permanent)
+    EXPIRED = "expired"            # time-in-force expired before full fill
+    FAILED = "failed"              # could not be placed (local or permanent exchange error)
 
 
 QUOTE_CURRENCY = "INR"

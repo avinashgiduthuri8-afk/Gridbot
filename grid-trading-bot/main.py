@@ -136,6 +136,8 @@ async def async_main() -> None:
         repos=repos,
         order_manager=mixed_order_manager,
         dca_manager=dca_manager,
+        notifier=notifier,
+        exchange=exchange,
         poll_interval=settings.order_poll_interval_seconds,
     )
 

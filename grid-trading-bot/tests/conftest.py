@@ -51,9 +51,14 @@ async def repos(db):
 class MockExchange(ExchangeClient):
     """Deterministic exchange stub for unit tests.
 
-    All orders fill immediately at the requested price.  Tests can override
-    `ticker_price`, `inr_balance`, and `fail_on_place` to drive different
-    scenarios.
+    Configurable behaviours:
+    - ``ticker_price``: price returned by get_ticker
+    - ``inr_balance``: balance for INR
+    - ``fail_on_place``: raise OrderRejectedError on place_order
+    - ``place_exception``: raise a specific exception on place_order
+    - ``partial_fill_qty``: if set, place_order returns PARTIALLY_FILLED with this qty
+    - ``open_orders_override``: if set, returned by get_open_orders
+    - ``status_overrides``: dict[exchange_order_id → ExchangeOrder] for get_order_status
     """
 
     def __init__(self) -> None:
@@ -62,6 +67,10 @@ class MockExchange(ExchangeClient):
         self.orders_placed: list[ExchangeOrder] = []
         self.cancelled: list[str] = []
         self.fail_on_place: bool = False
+        self.place_exception: Exception | None = None
+        self.partial_fill_qty: float | None = None   # triggers PARTIALLY_FILLED
+        self.open_orders_override: list[ExchangeOrder] | None = None
+        self.status_overrides: dict[str, ExchangeOrder] = {}
         self._order_counter: int = 0
 
     async def get_ticker(self, symbol: str) -> Ticker:
@@ -90,22 +99,40 @@ class MockExchange(ExchangeClient):
         quantity: float,
         order_type: str = "market_order",
     ) -> ExchangeOrder:
+        if self.place_exception is not None:
+            raise self.place_exception
         if self.fail_on_place:
             from exchange.exceptions import OrderRejectedError
             raise OrderRejectedError("Simulated rejection")
         self._order_counter += 1
         eid = f"EX{self._order_counter:04d}"
-        order = ExchangeOrder(
-            exchange_order_id=eid,
-            symbol=symbol,
-            side=side.value if hasattr(side, "value") else str(side),
-            price=price,
-            quantity=quantity,
-            filled_quantity=quantity,
-            filled_price=price,
-            status=OrderStatus.FILLED.value,
-            raw_status="filled",
-        )
+        side_str = side.value if hasattr(side, "value") else str(side)
+
+        if self.partial_fill_qty is not None:
+            filled = min(self.partial_fill_qty, quantity)
+            order = ExchangeOrder(
+                exchange_order_id=eid,
+                symbol=symbol,
+                side=side_str,
+                price=price,
+                quantity=quantity,
+                filled_quantity=filled,
+                filled_price=price,
+                status=OrderStatus.PARTIALLY_FILLED.value,
+                raw_status="partially_filled",
+            )
+        else:
+            order = ExchangeOrder(
+                exchange_order_id=eid,
+                symbol=symbol,
+                side=side_str,
+                price=price,
+                quantity=quantity,
+                filled_quantity=quantity,
+                filled_price=price,
+                status=OrderStatus.FILLED.value,
+                raw_status="filled",
+            )
         self.orders_placed.append(order)
         return order
 
@@ -114,13 +141,24 @@ class MockExchange(ExchangeClient):
         return True
 
     async def get_order_status(self, exchange_order_id: str) -> ExchangeOrder:
+        # Status override takes priority (for recovery / sync tests)
+        if exchange_order_id in self.status_overrides:
+            return self.status_overrides[exchange_order_id]
         for o in self.orders_placed:
             if o.exchange_order_id == exchange_order_id:
                 return o
         raise ExchangeError(f"Order {exchange_order_id} not found")
 
     async def get_open_orders(self, symbol: str | None = None) -> list[ExchangeOrder]:
-        return []
+        if self.open_orders_override is not None:
+            if symbol:
+                return [o for o in self.open_orders_override if o.symbol == symbol]
+            return list(self.open_orders_override)
+        # Default: return non-terminal placed orders
+        return [
+            o for o in self.orders_placed
+            if o.status in (OrderStatus.OPEN.value, OrderStatus.PARTIALLY_FILLED.value)
+        ]
 
     async def get_trade_history(self, symbol: str | None = None, limit: int = 50) -> list[Trade]:
         return []
@@ -171,8 +209,28 @@ class MockNotifier:
     async def price_alert_triggered(self, symbol: str, price: float, target: float, direction: str) -> None:
         self._record("price_alert_triggered", symbol, price, target, direction)
 
-    async def recovery_complete(self, active_count: int, reconciled: int) -> None:
-        self._record("recovery_complete", active_count, reconciled)
+    # Order lifecycle
+    async def order_submitted(self, **kwargs) -> None:
+        self._record("order_submitted", **kwargs)
+
+    async def partial_fill_received(self, **kwargs) -> None:
+        self._record("partial_fill_received", **kwargs)
+
+    async def order_cancelled(self, **kwargs) -> None:
+        self._record("order_cancelled", **kwargs)
+
+    async def order_failed(self, **kwargs) -> None:
+        self._record("order_failed", **kwargs)
+
+    # System
+    async def recovery_complete(self, **kwargs) -> None:
+        self._record("recovery_complete", **kwargs)
+
+    async def sync_completed(self, synced: int, fills_found: int) -> None:
+        self._record("sync_completed", synced, fills_found)
+
+    async def sync_error(self, context: str, message: str) -> None:
+        self._record("sync_error", context, message)
 
     async def error(self, context: str, message: str) -> None:
         self._record("error", context, message)
@@ -182,6 +240,12 @@ class MockNotifier:
 
     def was_called(self, name: str) -> bool:
         return any(c[0] == name for c in self.calls)
+
+    def call_count(self, name: str) -> int:
+        return sum(1 for c in self.calls if c[0] == name)
+
+    def get_calls(self, name: str) -> list[tuple]:
+        return [c for c in self.calls if c[0] == name]
 
 
 @pytest.fixture

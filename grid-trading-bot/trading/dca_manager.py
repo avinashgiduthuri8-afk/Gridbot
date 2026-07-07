@@ -277,6 +277,7 @@ class DCAManager:
     async def _execute_dip_buy(self, grid: dict, current_price: float) -> None:
         grid_id: str = grid["grid_id"]
         symbol: str = grid["symbol"]
+        mode: str = grid.get("mode", "real")
         try:
             market_info = await self._exchange.get_market_info(symbol)
             qty = calculate_quantity_for_inr(
@@ -287,22 +288,34 @@ class DCAManager:
             log.error("Cannot compute dip buy qty for %s: %s", grid_id, exc)
             return
         try:
-            await self._order_manager.place_dca_order(
+            order = await self._order_manager.place_dca_order(
                 grid_id=grid_id,
                 symbol=symbol,
                 side="buy",
                 price=current_price,
                 quantity=qty,
                 order_type="market_order",
+                mode=mode,
             )
-            log.info("Dip buy placed for %s: qty %.8f @ ₹%.2f", grid_id, qty, current_price)
+            log.info(
+                "Dip buy placed: grid=%s order=%s qty=%.8f @ ₹%.2f mode=%s",
+                grid_id, order.order_id, qty, current_price, mode,
+            )
+            await self._notifier.order_submitted(
+                symbol=symbol, grid_id=grid_id, order_id=order.order_id,
+                side="buy", quantity=qty, price=current_price, mode=mode,
+            )
         except ExchangeError as exc:
             log.error("Dip buy failed for %s: %s", grid_id, exc)
-            await self._notifier.error(f"Dip buy {symbol}", str(exc))
+            await self._notifier.order_failed(
+                symbol=symbol, grid_id=grid_id, order_id="(pending)",
+                side="buy", reason=str(exc), mode=mode,
+            )
 
     async def _execute_profit_sell(self, grid: dict, current_price: float) -> None:
         grid_id: str = grid["grid_id"]
         symbol: str = grid["symbol"]
+        mode: str = grid.get("mode", "real")
         try:
             market_info = await self._exchange.get_market_info(symbol)
             desired_qty = calculate_quantity_for_inr(
@@ -318,24 +331,36 @@ class DCAManager:
             log.warning("Profit sell qty is 0 for %s — skipping", grid_id)
             return
         try:
-            await self._order_manager.place_dca_order(
+            order = await self._order_manager.place_dca_order(
                 grid_id=grid_id,
                 symbol=symbol,
                 side="sell",
                 price=current_price,
                 quantity=sell_qty,
                 order_type="market_order",
+                mode=mode,
             )
-            log.info("Profit sell placed for %s: qty %.8f @ ₹%.2f", grid_id, sell_qty, current_price)
+            log.info(
+                "Profit sell placed: grid=%s order=%s qty=%.8f @ ₹%.2f mode=%s",
+                grid_id, order.order_id, sell_qty, current_price, mode,
+            )
+            await self._notifier.order_submitted(
+                symbol=symbol, grid_id=grid_id, order_id=order.order_id,
+                side="sell", quantity=sell_qty, price=current_price, mode=mode,
+            )
         except ExchangeError as exc:
             log.error("Profit sell failed for %s: %s", grid_id, exc)
-            await self._notifier.error(f"Profit sell {symbol}", str(exc))
+            await self._notifier.order_failed(
+                symbol=symbol, grid_id=grid_id, order_id="(pending)",
+                side="sell", reason=str(exc), mode=mode,
+            )
 
     async def _execute_stop_loss(self, grid: dict, current_price: float) -> None:
         grid_id: str = grid["grid_id"]
         symbol: str = grid["symbol"]
         total_qty: float = grid["total_quantity"]
         avg_entry: float = grid["average_entry_price"]
+        mode: str = grid.get("mode", "real")
 
         if total_qty <= 0:
             await self._repos.grids.update_status(grid_id, GridStatus.STOPPED.value)
@@ -357,6 +382,7 @@ class DCAManager:
                 price=current_price,
                 quantity=sell_qty,
                 order_type="market_order",
+                mode=mode,
             )
         except ExchangeError as exc:
             log.error("Stop loss sell failed for %s: %s", grid_id, exc)

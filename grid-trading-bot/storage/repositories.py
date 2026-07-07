@@ -153,11 +153,24 @@ class OrderRepository:
         return _row(row) if row else None
 
     async def list_open(self) -> list[dict[str, Any]]:
+        """All non-terminal orders (PENDING, SUBMITTED, OPEN, PARTIALLY_FILLED)."""
         cur = await self._db.connection.execute(
-            "SELECT * FROM orders WHERE status IN ('pending','open','partially_filled')"
+            "SELECT * FROM orders WHERE status IN "
+            "('pending','submitted','open','partially_filled')"
         )
         rows = await cur.fetchall()
         return [_row(r) for r in rows]
+
+    async def get_by_exchange_order_id(
+        self, exchange_order_id: str
+    ) -> dict[str, Any] | None:
+        """Look up a local order by its exchange-assigned ID."""
+        cur = await self._db.connection.execute(
+            "SELECT * FROM orders WHERE exchange_order_id = ?",
+            (exchange_order_id,),
+        )
+        row = await cur.fetchone()
+        return _row(row) if row else None
 
     async def list_for_grid(self, grid_id: str) -> list[dict[str, Any]]:
         cur = await self._db.connection.execute(
@@ -170,18 +183,31 @@ class OrderRepository:
     async def list_pending_for_grid(self, grid_id: str) -> list[dict[str, Any]]:
         cur = await self._db.connection.execute(
             """SELECT * FROM orders WHERE grid_id = ?
-               AND status IN ('pending','open','partially_filled')""",
+               AND status IN ('pending','submitted','open','partially_filled')""",
             (grid_id,),
         )
         rows = await cur.fetchall()
         return [_row(r) for r in rows]
 
+    async def list_submitted_no_exchange_id(self) -> list[dict[str, Any]]:
+        """Orders in SUBMITTED state that never received an exchange_order_id.
+        These represent in-flight calls that may or may not have reached the exchange.
+        """
+        cur = await self._db.connection.execute(
+            """SELECT * FROM orders
+               WHERE status = 'submitted' AND exchange_order_id IS NULL"""
+        )
+        rows = await cur.fetchall()
+        return [_row(r) for r in rows]
+
     async def count_pending_side(self, grid_id: str, side: str) -> int:
-        """Count non-terminal orders for a given grid and side."""
+        """Count non-terminal orders for a given grid and side.
+        Includes SUBMITTED so in-flight calls prevent duplicate placement.
+        """
         cur = await self._db.connection.execute(
             """SELECT COUNT(*) AS cnt FROM orders
                WHERE grid_id = ? AND side = ?
-               AND status IN ('pending','open','partially_filled')""",
+               AND status IN ('pending','submitted','open','partially_filled')""",
             (grid_id, side),
         )
         row = await cur.fetchone()
