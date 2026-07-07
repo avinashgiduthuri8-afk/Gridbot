@@ -16,6 +16,11 @@ DCA grid logic:
 from __future__ import annotations
 
 import math
+from decimal import Decimal, ROUND_DOWN
+
+from utils.logger import get_logger
+
+log = get_logger("trading")
 
 
 # ---------------------------------------------------------------------------
@@ -69,9 +74,13 @@ def calculate_quantity_for_inr(
 ) -> float:
     """Convert an INR investment amount into a tradeable coin quantity.
 
-    Rounds DOWN to the nearest valid step_size so the order is always
-    within the user's budget.  Raises ValueError if the resulting quantity
-    is below the exchange minimum.
+    Uses Decimal arithmetic to avoid floating-point rounding surprises when
+    dividing and snapping to a step_size.  Rounds DOWN (toward zero) to the
+    nearest valid step so the order is always within the user's budget.
+    Raises ValueError if the resulting quantity is below the exchange minimum.
+
+    Audit log emitted at DEBUG level every call:
+      price, investment, raw_quantity, rounded_quantity, min_quantity, result.
 
     Args:
         inr_amount:   INR amount the user wants to invest.
@@ -81,18 +90,39 @@ def calculate_quantity_for_inr(
     """
     if price <= 0:
         raise ValueError(f"Price must be positive, got {price}")
-    raw_quantity = inr_amount / price
-    if step_size > 0:
-        steps = math.floor(raw_quantity / step_size)
-        quantity = round(steps * step_size, 10)
+
+    d_inr = Decimal(str(inr_amount))
+    d_price = Decimal(str(price))
+    d_step = Decimal(str(step_size)) if step_size > 0 else Decimal(0)
+
+    raw_quantity = d_inr / d_price
+
+    if d_step > 0:
+        # Integer number of steps, then scale back — no floating-point noise
+        n_steps = int(raw_quantity / d_step)  # equivalent to floor for positives
+        quantity = Decimal(n_steps) * d_step
     else:
         quantity = raw_quantity
-    if quantity < min_quantity:
+
+    quantity_float = float(quantity)
+    raw_float = float(raw_quantity)
+
+    log.debug(
+        "qty_calc: price=₹%.4f investment=₹%.4f raw=%.8f rounded=%.8f "
+        "step=%s min=%.8f result=%s",
+        price, inr_amount, raw_float, quantity_float,
+        step_size, min_quantity,
+        "OK" if quantity_float >= min_quantity else "BELOW_MIN",
+    )
+
+    if quantity_float < min_quantity:
+        min_investment = float(Decimal(str(min_quantity)) * d_price)
         raise ValueError(
-            f"₹{inr_amount:,.2f} at ₹{price:,.2f} yields {quantity:.8f} units "
-            f"which is below the exchange minimum of {min_quantity}."
+            f"₹{inr_amount:,.2f} at ₹{price:,.2f} yields {quantity_float:.8f} units "
+            f"which is below the exchange minimum of {min_quantity}. "
+            f"Minimum investment required: ₹{min_investment:,.2f}."
         )
-    return quantity
+    return quantity_float
 
 
 def clamp_sell_quantity(

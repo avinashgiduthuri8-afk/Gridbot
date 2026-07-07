@@ -10,6 +10,7 @@ from telegram import InputFile, Update
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
 from bot_telegram.formatters import (
+    format_coin_info,
     format_daily_summary,
     format_grid_list,
     format_grid_summary,
@@ -37,7 +38,8 @@ HELP_TEXT = (
     "/resume &lt;grid_id&gt; — resume a paused grid\n\n"
     "<b>Monitoring</b>\n"
     "/status — bot overview and wallet balance\n"
-    "/balance — full real wallet breakdown with asset market values\n"
+    "/balance — full real wallet breakdown with asset market values and unrealized P&amp;L\n"
+    "/coininfo &lt;symbol&gt; — validate a pair and preview investment rules (e.g. /coininfo BNBINR)\n"
     "/paper — paper-trade grids with simulated realized + unrealized P&amp;L\n"
     "/grids — list all grids with DCA state\n"
     "/positions — coins currently held across all grids\n"
@@ -173,16 +175,92 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
             if b.currency.upper() != "INR" and (b.balance + b.locked_balance) > 0
         ]
 
+        # Batch-fetch prices in one API call where possible
+        symbols = {f"{b.currency.upper()}INR" for b in crypto_items}
         prices: dict[str, float] = {}
-        for b in crypto_items:
-            symbol = f"{b.currency.upper()}INR"
-            try:
-                ticker = await app_context.exchange.get_ticker(symbol)
-                prices[b.currency.upper()] = ticker.last_price
-            except Exception:  # noqa: BLE001
-                pass
+        try:
+            tickers = await app_context.exchange.get_tickers_batch(symbols)
+            for sym, ticker in tickers.items():
+                currency = sym.replace("INR", "")
+                prices[currency] = ticker.last_price
+        except Exception:  # noqa: BLE001
+            # Fall back to individual fetches
+            for b in crypto_items:
+                sym = f"{b.currency.upper()}INR"
+                try:
+                    ticker = await app_context.exchange.get_ticker(sym)
+                    prices[b.currency.upper()] = ticker.last_price
+                except Exception:  # noqa: BLE001
+                    pass
 
-        text = format_wallet_balance(balances, prices)
+        # Fetch active grids for unrealized P&L computation
+        try:
+            active_grids = await app_context.repos.grids.list_by_status(["active", "paused"])
+        except Exception:  # noqa: BLE001
+            active_grids = []
+
+        text = format_wallet_balance(balances, prices, grids=active_grids)
+        await update.message.reply_text(text, parse_mode="HTML")
+
+    @authorized
+    async def coininfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/coininfo <symbol> — validate a pair and show market + investment info."""
+        from trading.coin_validator import CoinValidator
+        from config.constants import (
+            DEFAULT_BASE_INVESTMENT,
+            DEFAULT_DIP_BUY_AMOUNT,
+            DEFAULT_PROFIT_SELL_AMOUNT,
+        )
+
+        if not context.args:
+            await update.message.reply_text(
+                "Usage: /coininfo &lt;symbol&gt;\nExample: <code>/coininfo BNBINR</code>",
+                parse_mode="HTML",
+            )
+            return
+
+        symbol = context.args[0].strip().upper()
+        if not symbol.endswith("INR"):
+            symbol = symbol + "INR"
+
+        await update.message.reply_text(f"⏳ Looking up <b>{symbol}</b>…", parse_mode="HTML")
+
+        validator = CoinValidator(app_context.exchange)
+
+        # 1. Validate pair
+        valid, reason = await validator.validate_pair(symbol)
+        if not valid:
+            await update.message.reply_text(reason, parse_mode="HTML")
+            return
+
+        # 2. Fetch live data
+        try:
+            market_info = await app_context.exchange.get_market_info(symbol)
+            extended_ticker = await app_context.exchange.get_extended_ticker(symbol)
+        except ExchangeError as exc:
+            await update.message.reply_text(f"❌ Could not fetch data for {symbol}: {exc}")
+            return
+
+        price = extended_ticker.last_price
+        if price <= 0:
+            await update.message.reply_text(
+                f"❌ {symbol} returned a zero price — the pair may be delisted or suspended."
+            )
+            return
+
+        # 3. Validate investment amounts at the current price
+        base_result = await validator.validate_investment(symbol, DEFAULT_BASE_INVESTMENT, price)
+        dip_result = await validator.validate_investment(symbol, DEFAULT_DIP_BUY_AMOUNT, price)
+        profit_result = await validator.validate_investment(symbol, DEFAULT_PROFIT_SELL_AMOUNT, price)
+
+        text = format_coin_info(
+            symbol=symbol,
+            market_info=market_info,
+            extended_ticker=extended_ticker,
+            base_validation=base_result,
+            dip_validation=dip_result,
+            profit_validation=profit_result,
+        )
         await update.message.reply_text(text, parse_mode="HTML")
 
     @authorized
@@ -474,6 +552,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("balance", balance_cmd))
+    app.add_handler(CommandHandler("coininfo", coininfo_cmd))
     app.add_handler(CommandHandler("paper", paper_cmd))
     app.add_handler(CommandHandler("grids", grids_cmd))
     app.add_handler(CommandHandler("positions", positions_cmd))

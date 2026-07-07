@@ -26,17 +26,45 @@ class Ticker:
 
 
 @dataclass
+class ExtendedTicker:
+    """Full 24-hour market snapshot returned by a single ticker call."""
+
+    symbol: str
+    last_price: float
+    change_24h: float       # percentage, e.g. -0.59 means −0.59 %
+    high_24h: float
+    low_24h: float
+    volume_24h: float       # volume in base currency
+    bid: float = 0.0
+    ask: float = 0.0
+    timestamp: int = 0      # unix ms
+
+    def to_ticker(self) -> Ticker:
+        return Ticker(symbol=self.symbol, last_price=self.last_price)
+
+
+@dataclass
 class MarketInfo:
     """Precision and minimum-size rules for a single trading pair."""
+
     symbol: str
     base_currency_precision: int
     quote_currency_precision: int
     min_quantity: float
     min_amount: float
+    # Optional fields — populated when the exchange provides them
+    status: str = "active"
+    base_currency_short_name: str = ""
+    target_currency_short_name: str = ""
+    # Derived in __post_init__ — not part of __init__
     step_size: float = field(init=False)
 
     def __post_init__(self) -> None:
         self.step_size = 10 ** (-self.base_currency_precision)
+
+    @property
+    def is_active(self) -> bool:
+        return self.status.lower() == "active"
 
 
 @dataclass
@@ -84,6 +112,22 @@ class ExchangeClient(ABC):
             except Exception:  # noqa: BLE001
                 pass
         return result
+
+    async def get_extended_ticker(self, symbol: str) -> ExtendedTicker:
+        """Fetch a full 24-hour market snapshot for *symbol*.
+
+        Default implementation delegates to get_ticker and fills 24-hour fields
+        with zeros.  Subclasses should override to return real 24h data.
+        """
+        ticker = await self.get_ticker(symbol)
+        return ExtendedTicker(
+            symbol=symbol,
+            last_price=ticker.last_price,
+            change_24h=0.0,
+            high_24h=0.0,
+            low_24h=0.0,
+            volume_24h=0.0,
+        )
 
     @abstractmethod
     async def get_balances(self) -> list[Balance]: ...

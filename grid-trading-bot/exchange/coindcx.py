@@ -26,7 +26,7 @@ from tenacity import (
 )
 
 from config.constants import OrderSide, OrderStatus
-from exchange.base import Balance, ExchangeClient, ExchangeOrder, MarketInfo, Ticker, Trade
+from exchange.base import Balance, ExchangeClient, ExchangeOrder, ExtendedTicker, MarketInfo, Ticker, Trade
 from exchange.exceptions import (
     ExchangeAuthError,
     ExchangeConnectionError,
@@ -185,14 +185,46 @@ class CoinDCXClient(ExchangeClient):
             quote_prec = int(item.get("quote_currency_precision", 2))
             min_qty = float(item.get("min_quantity", 0) or 0)
             min_amt = float(item.get("min_amount", 0) or 0)
+            status = str(item.get("status", "active")).lower()
+            base_short = str(item.get("base_currency_short_name", ""))
+            target_short = str(item.get("target_currency_short_name", ""))
             self._market_cache[sym] = MarketInfo(
                 symbol=sym,
                 base_currency_precision=base_prec,
                 quote_currency_precision=quote_prec,
                 min_quantity=min_qty,
                 min_amount=min_amt,
+                status=status,
+                base_currency_short_name=base_short,
+                target_currency_short_name=target_short,
             )
         log.info("Loaded market details for %d symbols", len(self._market_cache))
+
+    async def get_extended_ticker(self, symbol: str) -> "ExtendedTicker":
+        """Fetch full 24-hour market data for *symbol* in a single API call.
+
+        CoinDCX /exchange/ticker returns the full list; we scan client-side
+        so this costs exactly one HTTP round-trip regardless of the symbol.
+        """
+        data = await self._get_public("/exchange/ticker")
+        for entry in data:
+            if entry.get("market") != symbol:
+                continue
+            try:
+                return ExtendedTicker(
+                    symbol=symbol,
+                    last_price=float(entry.get("last_price", 0) or 0),
+                    change_24h=float(entry.get("change_24_hour", 0) or 0),
+                    high_24h=float(entry.get("high", 0) or 0),
+                    low_24h=float(entry.get("low", 0) or 0),
+                    volume_24h=float(entry.get("volume", 0) or 0),
+                    bid=float(entry.get("bid", 0) or 0),
+                    ask=float(entry.get("ask", 0) or 0),
+                    timestamp=int(entry.get("timestamp", 0) or 0),
+                )
+            except (KeyError, ValueError, TypeError) as exc:
+                log.warning("Bad extended ticker entry for %s: %s", symbol, exc)
+        raise ExchangeError(f"Symbol {symbol} not found in ticker response")
 
     # ------------------------------------------------------------------
     # Wallet

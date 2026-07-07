@@ -10,7 +10,7 @@ on the next poll — exactly mirroring the real order flow.
 from __future__ import annotations
 
 from config.constants import OrderStatus
-from exchange.base import Balance, ExchangeClient, ExchangeOrder, MarketInfo, Ticker, Trade
+from exchange.base import Balance, ExchangeClient, ExchangeOrder, ExtendedTicker, MarketInfo, Ticker, Trade
 from config.constants import OrderSide
 from utils.logger import get_logger
 
@@ -40,6 +40,10 @@ class PaperExchangeClient(ExchangeClient):
 
     async def get_market_info(self, symbol: str) -> MarketInfo:
         return await self._real.get_market_info(symbol)
+
+    async def get_extended_ticker(self, symbol: str) -> "ExtendedTicker":
+        """Delegate extended ticker to the real exchange — prices are always live."""
+        return await self._real.get_extended_ticker(symbol)
 
     async def get_balances(self) -> list[Balance]:
         return [Balance(currency="INR", balance=PAPER_INITIAL_BALANCE, locked_balance=0.0)]

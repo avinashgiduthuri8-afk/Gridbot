@@ -345,10 +345,75 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             await query.edit_message_text("❌ Grid creation cancelled.")
             return ConversationHandler.END
 
+        d = context.user_data
+        symbol: str = d.get("symbol", "")
+
+        # ------------------------------------------------------------------
+        # Pre-flight validation: pair + investment amounts
+        # ------------------------------------------------------------------
+        await query.edit_message_text("⏳ Validating pair and investment rules…")
+
+        from trading.coin_validator import CoinValidator
+        from exchange.exceptions import ExchangeError
+
+        validator = CoinValidator(app_context.exchange)
+
+        # 1. Pair validation
+        try:
+            valid_pair, pair_reason = await validator.validate_pair(symbol)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Pair validation error for %s: %s", symbol, exc)
+            valid_pair, pair_reason = False, f"Could not validate pair {symbol}: {exc}"
+
+        if not valid_pair:
+            await query.edit_message_text(
+                f"{pair_reason}\n\nUse /newgrid to start over.",
+                parse_mode="HTML",
+            )
+            return ConversationHandler.END
+
+        # 2. Resolve the price we'll validate against
+        entry_price: float = float(d.get("entry_price", 0))
+        if entry_price <= 0:
+            try:
+                ticker = await app_context.exchange.get_ticker(symbol)
+                entry_price = ticker.last_price
+            except ExchangeError as exc:
+                await query.edit_message_text(
+                    f"❌ Could not fetch current price for {symbol}: {exc}\n\nUse /newgrid to try again."
+                )
+                return ConversationHandler.END
+
+        # 3. Investment amount validation
+        checks = [
+            ("Base investment", float(d.get("base_investment", 0))),
+            ("Dip buy amount", float(d.get("dip_buy_amount", 0))),
+            ("Profit sell amount", float(d.get("profit_sell_amount", 0))),
+        ]
+        for label, amount in checks:
+            try:
+                result = await validator.validate_investment(symbol, amount, entry_price)
+            except Exception as exc:  # noqa: BLE001
+                await query.edit_message_text(
+                    f"❌ Could not validate {label}: {exc}\n\nUse /newgrid to start over."
+                )
+                return ConversationHandler.END
+
+            if not result.valid:
+                await query.edit_message_text(
+                    f"❌ <b>{label}</b> (₹{amount:,.2f}) does not meet exchange rules:\n\n"
+                    f"{result.reason}\n\n"
+                    "Use /newgrid to start over with a larger amount.",
+                    parse_mode="HTML",
+                )
+                return ConversationHandler.END
+
+        # ------------------------------------------------------------------
+        # All checks passed — start the grid
+        # ------------------------------------------------------------------
         await query.edit_message_text("⏳ Starting grid… please wait.")
         try:
             grid_id = await app_context.dca_manager.start_grid(context.user_data)
-            symbol = context.user_data.get("symbol", "")
             await query.edit_message_text(
                 f"✅ <b>DCA Grid Started!</b>\n\n"
                 f"Coin: <b>{symbol}</b>\n"
