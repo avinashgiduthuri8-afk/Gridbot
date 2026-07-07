@@ -205,14 +205,14 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiosqlite", specifier = ">=0.22.1" },
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "pytest", specifier = ">=9.1.1" },
-    { name = "pytest-asyncio", specifier = ">=1.4.0" },
-    { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "aiosqlite", specifier = "==0.22.1" },
+    { name = "httpx", specifier = "==0.28.1" },
+    { name = "pytest", specifier = "==9.1.1" },
+    { name = "pytest-asyncio", specifier = "==1.4.0" },
+    { name = "python-dotenv", specifier = "==1.2.2" },
     { name = "python-telegram-bot", specifier = "==22.7" },
-    { name = "pytz", specifier = ">=2026.2" },
-    { name = "tenacity", specifier = ">=9.1.4" },
+    { name = "pytz", specifier = "==2026.2" },
+    { name = "tenacity", specifier = "==9.1.4" },
 ]
 
 [[package]]
