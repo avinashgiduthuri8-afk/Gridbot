@@ -176,11 +176,13 @@ class DCAManager:
 
         pending = await self._repos.orders.list_pending_for_grid(grid_id)
         for order in pending:
-            if order["side"] == "buy":
-                try:
-                    await self._order_manager.cancel_order(order["order_id"])
-                except ExchangeError as exc:
-                    log.warning("Could not cancel buy order %s during stop: %s", order["order_id"], exc)
+            try:
+                await self._order_manager.cancel_order(order["order_id"])
+            except ExchangeError as exc:
+                log.warning(
+                    "Could not cancel %s order %s during stop: %s",
+                    order["side"], order["order_id"], exc,
+                )
 
         await self._repos.grids.update_status(grid_id, GridStatus.STOPPED.value)
         log.info("Grid %s stopped (reason: %s)", grid_id, reason)
@@ -305,7 +307,6 @@ class DCAManager:
             log.error("Cannot compute profit sell qty for %s: %s", grid_id, exc)
             return
 
-        market_info = await self._exchange.get_market_info(symbol)
         sell_qty = clamp_sell_quantity(desired_qty, grid["total_quantity"], market_info.step_size)
         if sell_qty <= 0:
             log.warning("Profit sell qty is 0 for %s — skipping", grid_id)

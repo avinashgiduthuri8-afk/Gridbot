@@ -95,14 +95,23 @@ async def test_rejects_when_max_simultaneous_grids_reached(repos, risk_settings)
 
 
 @pytest.mark.anyio
-async def test_rejects_when_total_capital_exceeded(repos, risk_settings):
-    # Two grids already consuming 9000 INR each at total_investment
+async def test_rejects_when_total_capital_exceeded(repos):
+    # Use a settings that allows up to 5 grids so the capital check fires
+    # before the simultaneous-grid-count check.
+    generous_settings = RiskSettings(
+        max_total_capital=10000,
+        max_capital_per_coin=5000,
+        max_simultaneous_grids=5,
+        min_wallet_balance=500,
+        daily_loss_limit=1000,
+    )
+    # Two grids already consuming 9000 INR total
     grid1 = _make_grid("BTCINR", total_investment=4500.0)
     grid2 = _make_grid("ETHINR", total_investment=4500.0)
     await repos.grids.create(grid1)
     await repos.grids.create(grid2)
-    # New grid would push total beyond 10000
-    manager = RiskManager(risk_settings, repos)
+    # New grid (2000 INR) would push 9000+2000=11000 > 10000 limit
+    manager = RiskManager(generous_settings, repos)
     result = await manager.check_can_start_grid("SOLINR", 2000, wallet_inr_balance=5000)
     assert not result.allowed
     assert "Total capital limit" in result.reason
