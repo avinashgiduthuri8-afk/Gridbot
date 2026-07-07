@@ -1,6 +1,4 @@
-"""Tests for RiskManager checks, using the real SQLite-backed repositories
-against a temporary on-disk database (aiosqlite has no true in-memory
-mode across connections, so each test gets its own temp file)."""
+"""Tests for RiskManager checks against the DCA grid schema."""
 
 from __future__ import annotations
 
@@ -8,20 +6,37 @@ import pytest
 
 from config.settings import RiskSettings
 from risk.risk_manager import RiskManager
-from storage.database import Database
-from storage.models import GridRecord
-from storage.repositories import Repositories
 from utils.helpers import now_iso
+from storage.models import DCAGridRecord
+from utils.helpers import new_id
 
 
-@pytest.fixture
-async def repos(tmp_path):
-    db_path = tmp_path / "test.db"
-    db = Database(str(db_path))
-    await db.connect()
-    await db.migrate()
-    yield Repositories(db)
-    await db.close()
+def _make_grid(symbol: str, total_investment: float = 0.0) -> DCAGridRecord:
+    now = now_iso()
+    return DCAGridRecord(
+        grid_id=new_id("grd"),
+        symbol=symbol,
+        status="active",
+        entry_price=54000.0,
+        base_investment=500.0,
+        dip_buy_amount=100.0,
+        dip_percentage=5.0,
+        profit_sell_amount=150.0,
+        profit_percentage=7.0,
+        max_levels=10,
+        stop_loss_percentage=50.0,
+        current_level=1,
+        total_quantity=0.01,
+        total_investment=total_investment,
+        average_entry_price=54000.0,
+        last_buy_price=54000.0,
+        next_buy_price=51300.0,
+        next_sell_price=57780.0,
+        realized_profit=0.0,
+        completed_cycles=0,
+        created_at=now,
+        updated_at=now,
+    )
 
 
 @pytest.fixture
@@ -35,12 +50,14 @@ def risk_settings():
     )
 
 
+@pytest.mark.anyio
 async def test_allows_grid_within_limits(repos, risk_settings):
     manager = RiskManager(risk_settings, repos)
     result = await manager.check_can_start_grid("BTCINR", 1000, wallet_inr_balance=5000)
     assert result.allowed
 
 
+@pytest.mark.anyio
 async def test_rejects_grid_exceeding_per_coin_cap(repos, risk_settings):
     manager = RiskManager(risk_settings, repos)
     result = await manager.check_can_start_grid("BTCINR", 6000, wallet_inr_balance=10000)
@@ -48,42 +65,50 @@ async def test_rejects_grid_exceeding_per_coin_cap(repos, risk_settings):
     assert "per-coin" in result.reason
 
 
-async def test_rejects_grid_when_wallet_balance_too_low(repos, risk_settings):
+@pytest.mark.anyio
+async def test_rejects_when_wallet_balance_too_low(repos, risk_settings):
     manager = RiskManager(risk_settings, repos)
+    # wallet=1200, investment=1000 → remaining=200 < min_wallet_balance=500
     result = await manager.check_can_start_grid("BTCINR", 1000, wallet_inr_balance=1200)
     assert not result.allowed
     assert "minimum" in result.reason
 
 
-async def test_rejects_duplicate_symbol_grid(repos, risk_settings):
-    await repos.grids.create(
-        GridRecord(
-            grid_id="grid_1", symbol="BTCINR", grid_type="arithmetic", status="active",
-            upper_price=100, lower_price=50, grid_levels=5, investment_per_grid=100,
-            created_at=now_iso(), updated_at=now_iso(),
-        )
-    )
+@pytest.mark.anyio
+async def test_rejects_duplicate_symbol(repos, risk_settings):
+    grid = _make_grid("BTCINR")
+    await repos.grids.create(grid)
     manager = RiskManager(risk_settings, repos)
     result = await manager.check_can_start_grid("BTCINR", 500, wallet_inr_balance=5000)
     assert not result.allowed
     assert "already running" in result.reason
 
 
+@pytest.mark.anyio
 async def test_rejects_when_max_simultaneous_grids_reached(repos, risk_settings):
-    for i in range(2):
-        await repos.grids.create(
-            GridRecord(
-                grid_id=f"grid_{i}", symbol=f"COIN{i}INR", grid_type="arithmetic", status="active",
-                upper_price=100, lower_price=50, grid_levels=5, investment_per_grid=100,
-                created_at=now_iso(), updated_at=now_iso(),
-            )
-        )
+    for sym in ["BTCINR", "ETHINR"]:
+        await repos.grids.create(_make_grid(sym))
     manager = RiskManager(risk_settings, repos)
-    result = await manager.check_can_start_grid("ETHINR", 100, wallet_inr_balance=5000)
+    result = await manager.check_can_start_grid("SOLINR", 100, wallet_inr_balance=5000)
     assert not result.allowed
     assert "Maximum simultaneous grids" in result.reason
 
 
+@pytest.mark.anyio
+async def test_rejects_when_total_capital_exceeded(repos, risk_settings):
+    # Two grids already consuming 9000 INR each at total_investment
+    grid1 = _make_grid("BTCINR", total_investment=4500.0)
+    grid2 = _make_grid("ETHINR", total_investment=4500.0)
+    await repos.grids.create(grid1)
+    await repos.grids.create(grid2)
+    # New grid would push total beyond 10000
+    manager = RiskManager(risk_settings, repos)
+    result = await manager.check_can_start_grid("SOLINR", 2000, wallet_inr_balance=5000)
+    assert not result.allowed
+    assert "Total capital limit" in result.reason
+
+
+@pytest.mark.anyio
 async def test_emergency_stop_blocks_new_grids(repos, risk_settings):
     manager = RiskManager(risk_settings, repos)
     manager.trigger_emergency_stop()
@@ -91,5 +116,12 @@ async def test_emergency_stop_blocks_new_grids(repos, risk_settings):
     assert not result.allowed
     assert manager.emergency_stopped
 
+
+@pytest.mark.anyio
+async def test_clear_emergency_stop(repos, risk_settings):
+    manager = RiskManager(risk_settings, repos)
+    manager.trigger_emergency_stop()
     manager.clear_emergency_stop()
     assert not manager.emergency_stopped
+    result = await manager.check_can_start_grid("BTCINR", 100, wallet_inr_balance=5000)
+    assert result.allowed

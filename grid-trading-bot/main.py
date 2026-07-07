@@ -1,8 +1,7 @@
-"""Application entrypoint.
+"""Application entrypoint for the Manual DCA Grid Trading Bot.
 
-Wires together configuration, database, exchange client, the trading
-engine (grid manager, order manager, position manager, risk manager),
-the order monitor, recovery, and the Telegram bot — then runs forever.
+Wires together configuration, database, exchange client, the DCA trading
+engine, the order monitor, recovery, and the Telegram bot — then runs forever.
 
 Run with: python main.py
 """
@@ -22,11 +21,10 @@ from notifications.notifier import Notifier
 from risk.risk_manager import RiskManager
 from storage.database import Database
 from storage.repositories import Repositories
-from trading.grid_manager import GridManager
+from trading.alert_manager import AlertManager
+from trading.dca_manager import DCAManager
 from trading.order_manager import OrderManager
 from trading.order_monitor import OrderMonitor
-from trading.position_manager import PositionManager
-from trading.alert_manager import AlertManager
 from trading.recovery import RecoveryManager
 from utils.helpers import now_iso
 from utils.logger import get_logger, setup_logging
@@ -34,39 +32,31 @@ from utils.logger import get_logger, setup_logging
 log = get_logger("trading")
 
 
-async def run_range_check_loop(grid_manager: GridManager, repos: Repositories, interval: int) -> None:
+async def run_price_trigger_loop(
+    dca_manager: DCAManager, repos: Repositories, interval: int
+) -> None:
+    """Poll active grids for dip-buy, profit-sell, and stop-loss triggers."""
     while True:
         try:
             active_grids = await repos.grids.list_by_status(["active"])
             for grid in active_grids:
-                await grid_manager.check_range_breach(grid["grid_id"])
+                try:
+                    ticker = await dca_manager._exchange.get_ticker(grid["symbol"])
+                    await dca_manager.check_grid_triggers(grid["grid_id"], ticker.last_price)
+                except Exception:  # noqa: BLE001
+                    log.exception("Price trigger check failed for grid %s", grid["grid_id"])
         except Exception:  # noqa: BLE001
-            log.exception("Range check loop failed")
+            log.exception("Price trigger loop cycle failed")
         await asyncio.sleep(interval)
-
-
-async def run_daily_summary_loop(notifier: Notifier, repos: Repositories, interval: int) -> None:
-    """Periodically push a Telegram summary of today's realized P&L, trade
-    count, and active grid standings, on the cadence configured via
-    DAILY_SUMMARY_INTERVAL_SECONDS (default: once every 24 hours)."""
-    while True:
-        await asyncio.sleep(interval)
-        try:
-            today = now_iso()[:10]
-            daily_stats = await repos.daily_stats.get(today)
-            active_grids = await repos.grids.list_by_status(["active", "paused"])
-            lifetime_realized = await repos.trade_history.total_realized_pnl()
-            summary_text = format_daily_summary(today, daily_stats, active_grids, lifetime_realized)
-            await notifier.daily_summary(summary_text)
-        except Exception:  # noqa: BLE001 - never let the scheduler die
-            log.exception("Daily summary loop failed")
 
 
 async def run_alert_check_loop(
-    alert_manager: AlertManager, exchange: CoinDCXClient, notifier: Notifier, interval: int
+    alert_manager: AlertManager,
+    exchange: CoinDCXClient,
+    notifier: Notifier,
+    interval: int,
 ) -> None:
-    """Poll live prices for any symbols with active alerts and fire
-    one-shot notifications when targets are crossed."""
+    """Poll live prices for symbols with active price alerts."""
     while True:
         await asyncio.sleep(interval)
         try:
@@ -88,6 +78,23 @@ async def run_alert_check_loop(
             log.exception("Alert check loop failed")
 
 
+async def run_daily_summary_loop(
+    notifier: Notifier, repos: Repositories, interval: int
+) -> None:
+    """Push a Telegram summary of today's P&L on the configured cadence."""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            today = now_iso()[:10]
+            daily_stats = await repos.daily_stats.get(today)
+            active_grids = await repos.grids.list_by_status(["active", "paused"])
+            lifetime_realized = await repos.trade_history.total_realized_pnl()
+            summary_text = format_daily_summary(today, daily_stats, active_grids, lifetime_realized)
+            await notifier.daily_summary(summary_text)
+        except Exception:  # noqa: BLE001
+            log.exception("Daily summary loop failed")
+
+
 async def async_main() -> None:
     try:
         settings = load_settings()
@@ -96,7 +103,7 @@ async def async_main() -> None:
         raise SystemExit(1) from exc
 
     setup_logging(settings.log_dir, settings.log_level)
-    log.info("Starting Manual Grid Trading Bot...")
+    log.info("Starting Manual DCA Grid Trading Bot...")
 
     db = Database(settings.database_path)
     await db.connect()
@@ -115,24 +122,47 @@ async def async_main() -> None:
 
     risk_manager = RiskManager(settings.risk, repos)
     order_manager = OrderManager(exchange, repos)
-    position_manager = PositionManager(repos)
-    grid_manager = GridManager(exchange, repos, order_manager, position_manager, risk_manager, notifier)
-    recovery_manager = RecoveryManager(exchange, repos, notifier)
-    order_monitor = OrderMonitor(repos, order_manager, grid_manager, settings.order_poll_interval_seconds)
     alert_manager = AlertManager()
 
+    dca_manager = DCAManager(
+        exchange=exchange,
+        repos=repos,
+        order_manager=order_manager,
+        notifier=notifier,
+        risk=risk_manager,
+    )
+
+    recovery_manager = RecoveryManager(
+        exchange=exchange,
+        repos=repos,
+        notifier=notifier,
+        dca_manager=dca_manager,
+    )
+
+    order_monitor = OrderMonitor(
+        repos=repos,
+        order_manager=order_manager,
+        dca_manager=dca_manager,
+        poll_interval=settings.order_poll_interval_seconds,
+    )
+
     app_context = BotAppContext(
-        settings=settings, repos=repos, exchange=exchange,
-        grid_manager=grid_manager, risk_manager=risk_manager,
-        notifier=notifier, alert_manager=alert_manager,
+        settings=settings,
+        repos=repos,
+        exchange=exchange,
+        dca_manager=dca_manager,
+        risk_manager=risk_manager,
+        notifier=notifier,
+        alert_manager=alert_manager,
     )
     application = build_application(app_context)
 
     await recovery_manager.recover()
 
     order_monitor.start()
-    range_check_task = asyncio.create_task(
-        run_range_check_loop(grid_manager, repos, settings.price_poll_interval_seconds)
+
+    price_trigger_task = asyncio.create_task(
+        run_price_trigger_loop(dca_manager, repos, settings.price_poll_interval_seconds)
     )
     daily_summary_task = asyncio.create_task(
         run_daily_summary_loop(notifier, repos, settings.daily_summary_interval_seconds)
@@ -152,7 +182,6 @@ async def async_main() -> None:
         try:
             loop.add_signal_handler(sig, _handle_signal)
         except NotImplementedError:
-            # Signal handlers aren't supported on some platforms (e.g. Windows).
             pass
 
     async with application:
@@ -167,7 +196,7 @@ async def async_main() -> None:
         await application.updater.stop()
         await application.stop()
 
-    range_check_task.cancel()
+    price_trigger_task.cancel()
     daily_summary_task.cancel()
     alert_task.cancel()
     await order_monitor.stop()

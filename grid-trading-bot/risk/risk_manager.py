@@ -1,6 +1,8 @@
-"""Centralized risk checks. Every capital-committing action (starting a
-grid, placing an order) must pass through here first. This is the single
-place that enforces the user's configured risk limits.
+"""Centralized risk checks for the DCA grid bot.
+
+Every capital-committing action (starting a grid, placing an order) must pass
+through here first. This is the single place that enforces the user's
+configured risk limits, including the global emergency stop.
 """
 
 from __future__ import annotations
@@ -42,10 +44,12 @@ class RiskManager:
     async def check_can_start_grid(
         self, symbol: str, planned_investment: float, wallet_inr_balance: float
     ) -> RiskCheckResult:
+        """Check all risk rules before allowing a new DCA grid to start."""
         if self._emergency_stop:
             return RiskCheckResult(False, "Emergency stop is active. Resume manually to continue.")
 
         active_grids = await self._repos.grids.list_by_status(["active", "paused"])
+
         if len(active_grids) >= self._settings.max_simultaneous_grids:
             return RiskCheckResult(
                 False,
@@ -63,7 +67,7 @@ class RiskManager:
                 f"limit of ₹{self._settings.max_capital_per_coin:,.2f}.",
             )
 
-        total_committed = sum(g["total_invested"] or 0 for g in active_grids)
+        total_committed = sum(float(g["total_investment"] or 0) for g in active_grids)
         if total_committed + planned_investment > self._settings.max_total_capital:
             return RiskCheckResult(
                 False,
@@ -84,11 +88,18 @@ class RiskManager:
 
         return RiskCheckResult(True)
 
-    async def check_can_place_order(self, order_value: float, wallet_inr_balance: float) -> RiskCheckResult:
+    async def check_can_place_order(
+        self, order_value_inr: float, wallet_inr_balance: float
+    ) -> RiskCheckResult:
+        """Check whether an individual order can be placed right now."""
         if self._emergency_stop:
             return RiskCheckResult(False, "Emergency stop is active.")
-        if wallet_inr_balance - order_value < 0:
-            return RiskCheckResult(False, "Insufficient INR balance for this order.")
+        if wallet_inr_balance < order_value_inr:
+            return RiskCheckResult(
+                False,
+                f"Insufficient INR balance. Need ₹{order_value_inr:,.2f}, "
+                f"available ₹{wallet_inr_balance:,.2f}.",
+            )
         return await self._check_daily_loss_limit()
 
     async def _check_daily_loss_limit(self) -> RiskCheckResult:
@@ -101,8 +112,3 @@ class RiskManager:
                 "Trading is paused for today.",
             )
         return RiskCheckResult(True)
-
-    def check_duplicate_order(self, existing_order_ids: set[str], candidate_key: str) -> bool:
-        """Return True if `candidate_key` (e.g. f"{grid_id}:{level}:{side}")
-        already has an in-flight order, to prevent duplicate submissions."""
-        return candidate_key in existing_order_ids

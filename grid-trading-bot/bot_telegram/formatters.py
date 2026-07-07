@@ -1,61 +1,80 @@
-"""Formatting helpers turning DB rows into readable Telegram messages."""
+"""Formatting helpers for DCA grid bot Telegram messages."""
 
 from __future__ import annotations
 
 
+def _status_emoji(status: str) -> str:
+    return {"active": "🟢", "paused": "⏸", "stopped": "🛑", "completed": "🏁"}.get(status, "❓")
+
+
 def format_grid_summary(grid: dict) -> str:
+    status = grid["status"]
+    emoji = _status_emoji(status)
+    avg = grid["average_entry_price"]
+    qty = grid["total_quantity"]
+    invested = grid["total_investment"]
+    unrealized_note = ""
+    if avg > 0 and qty > 0:
+        unrealized_note = f"\nHolding: {qty:.6f} coins @ avg ₹{avg:,.2f} (invested ₹{invested:,.2f})"
+
+    next_buy = grid["next_buy_price"]
+    next_sell = grid["next_sell_price"]
+    targets = ""
+    if status == "active" and grid["current_level"] > 0:
+        targets = (
+            f"\nNext buy: ₹{next_buy:,.2f} | Next sell: ₹{next_sell:,.2f}"
+        )
+
     return (
-        f"<b>{grid['symbol']}</b> — <code>{grid['grid_id']}</code>\n"
-        f"Status: {grid['status'].upper()}\n"
-        f"Type: {grid['grid_type']}\n"
-        f"Range: ₹{grid['lower_price']:,.2f} – ₹{grid['upper_price']:,.2f}\n"
-        f"Levels: {grid['grid_levels']}\n"
-        f"Investment/grid: ₹{grid['investment_per_grid']:,.2f}\n"
-        f"Realized profit: ₹{grid['realized_profit']:,.2f}\n"
-        f"Completed cycles: {grid['completed_cycles']}"
+        f"{emoji} <b>{grid['symbol']}</b> — <code>{grid['grid_id']}</code>\n"
+        f"Status: {status.upper()} | Level: {grid['current_level']}/{grid['max_levels']}\n"
+        f"Entry: ₹{grid['entry_price']:,.2f} | Dip: {grid['dip_percentage']}% | Profit: {grid['profit_percentage']}%\n"
+        f"Stop loss: {grid['stop_loss_percentage']}%"
+        f"{unrealized_note}"
+        f"{targets}\n"
+        f"Realized profit: ₹{grid['realized_profit']:,.2f} | Sell cycles: {grid['completed_cycles']}"
     )
 
 
 def format_grid_list(grids: list[dict]) -> str:
     if not grids:
-        return "No grids found."
-    lines = ["<b>Grids</b>\n"]
+        return "No grids found. Use /newgrid to create one."
+    lines = ["<b>All DCA Grids</b>\n"]
     for g in grids:
+        emoji = _status_emoji(g["status"])
+        avg_entry = g["average_entry_price"]
+        avg_part = f" | avg ₹{avg_entry:,.2f}" if avg_entry > 0 else ""
         lines.append(
-            f"• <b>{g['symbol']}</b> ({g['status']}) — "
-            f"<code>{g['grid_id']}</code> — profit ₹{g['realized_profit']:,.2f}"
+            f"{emoji} <b>{g['symbol']}</b> ({g['status']}) — "
+            f"<code>{g['grid_id']}</code>{avg_part} | ₹{g['realized_profit']:,.2f} profit"
         )
     return "\n".join(lines)
 
 
-def format_positions(positions: list[dict]) -> str:
-    if not positions:
+def format_positions(grids: list[dict]) -> str:
+    active = [g for g in grids if g["total_quantity"] > 0 and g["status"] in ("active", "paused")]
+    if not active:
         return "No open positions."
     lines = ["<b>Open Positions</b>\n"]
-    for p in positions:
+    for g in active:
         lines.append(
-            f"• {p['symbol']}: {p['quantity']} @ ₹{p['entry_price']:,.2f} "
-            f"(grid <code>{p['grid_id']}</code>)"
+            f"• <b>{g['symbol']}</b>: {g['total_quantity']:.6f} coins "
+            f"@ avg ₹{g['average_entry_price']:,.2f} "
+            f"(invested ₹{g['total_investment']:,.2f}) "
+            f"<code>{g['grid_id']}</code>"
         )
     return "\n".join(lines)
 
 
 def format_profit_summary(grids: list[dict], total_realized: float) -> str:
-    lines = [f"<b>Total Realized Profit:</b> ₹{total_realized:,.2f}\n"]
+    lines = [f"<b>💰 Total Realized Profit:</b> ₹{total_realized:,.2f}\n"]
+    if not grids:
+        lines.append("No grids yet.")
     for g in grids:
-        lines.append(f"• {g['symbol']}: ₹{g['realized_profit']:,.2f} ({g['completed_cycles']} cycles)")
-    return "\n".join(lines) if len(lines) > 1 else lines[0]
-
-
-def format_settings(coin_configs: list[dict]) -> str:
-    if not coin_configs:
-        return "No per-coin settings configured yet. Use /startgrid to create one."
-    lines = ["<b>Per-Coin Settings</b>\n"]
-    for c in coin_configs:
+        emoji = _status_emoji(g["status"])
         lines.append(
-            f"• <b>{c['symbol']}</b>: levels={c['grid_levels']}, "
-            f"investment=₹{c['investment_per_grid']:,.2f}, "
-            f"range=₹{c['lower_price']:,.2f}-₹{c['upper_price']:,.2f}, type={c['grid_type']}"
+            f"{emoji} <b>{g['symbol']}</b>: ₹{g['realized_profit']:,.2f} "
+            f"({g['completed_cycles']} sell cycle(s)) — {g['status']}"
         )
     return "\n".join(lines)
 
@@ -79,9 +98,11 @@ def format_daily_summary(
     if active_grids:
         lines.append("")
         for g in active_grids:
+            avg = g["average_entry_price"]
+            avg_part = f" avg ₹{avg:,.2f}" if avg > 0 else ""
             lines.append(
-                f"• <b>{g['symbol']}</b> ({g['status']}) — "
-                f"profit ₹{g['realized_profit']:,.2f}, {g['completed_cycles']} cycle(s)"
+                f"• <b>{g['symbol']}</b> ({g['status']}) lvl {g['current_level']}/{g['max_levels']}"
+                f"{avg_part} — ₹{g['realized_profit']:,.2f} profit"
             )
     return "\n".join(lines)
 
@@ -91,13 +112,12 @@ def format_trade_history(symbol: str, trades: list[dict]) -> str:
         return f"No trade history for {symbol} yet."
     lines = [f"<b>Recent Trades — {symbol}</b>\n"]
     for t in trades:
-        side_label = t["side"].upper()
-        pnl = t["pnl"]
-        pnl_part = f", pnl ₹{pnl:,.2f}" if t["side"].lower() == "sell" else ""
+        side = t["side"].upper()
+        pnl_part = f" | pnl ₹{t['pnl']:+,.2f}" if t["side"] == "sell" else ""
+        ts = str(t["executed_at"])[:19].replace("T", " ")
         lines.append(
-            f"• [{t['executed_at'][:19].replace('T', ' ')}] {side_label} "
-            f"{t['quantity']} @ ₹{t['price']:,.2f}{pnl_part} "
-            f"(grid <code>{t['grid_id']}</code>)"
+            f"• [{ts}] {side} {t['quantity']:.6f} @ ₹{t['price']:,.2f}"
+            f" (₹{t['investment_inr']:,.2f}){pnl_part}"
         )
     return "\n".join(lines)
 
@@ -107,5 +127,8 @@ def format_logs(logs: list[dict]) -> str:
         return "No recent log entries."
     lines = ["<b>Recent Logs</b>\n"]
     for entry in reversed(logs):
-        lines.append(f"[{entry['created_at'][11:19]}] {entry['level']} ({entry['channel']}): {entry['message']}")
+        ts = str(entry["created_at"])[11:19]
+        lines.append(
+            f"[{ts}] {entry['level']} ({entry['channel']}): {entry['message']}"
+        )
     return "\n".join(lines)

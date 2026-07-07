@@ -1,6 +1,4 @@
-"""Shared pytest fixtures. Adds the project root to sys.path so tests can
-import top-level packages (config, grid, storage, ...) regardless of how
-pytest is invoked."""
+"""Shared pytest fixtures for the DCA grid bot test suite."""
 
 from __future__ import annotations
 
@@ -17,7 +15,24 @@ os.environ.setdefault("DATABASE_PATH", ":memory:")
 
 import pytest
 
+from storage.database import Database
+from storage.repositories import Repositories
+
 
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+@pytest.fixture
+async def db():
+    database = Database(":memory:")
+    await database.connect()
+    await database.migrate()
+    yield database
+    await database.close()
+
+
+@pytest.fixture
+async def repos(db):
+    return Repositories(db)

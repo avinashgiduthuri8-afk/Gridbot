@@ -1,8 +1,8 @@
 """Order Monitor: background loop that polls open orders for fills and
-routes filled buy/sell events into the GridManager.
+routes filled buy/sell events to the DCA Manager.
 
-This is the only place that discovers fills — CoinDCX has no push/websocket
-guarantee used here, so a resilient polling loop is the source of truth.
+CoinDCX has no push/websocket guarantee in this integration, so a
+resilient polling loop is the source of truth for fill events.
 """
 
 from __future__ import annotations
@@ -12,17 +12,23 @@ import asyncio
 from config.constants import OrderStatus
 from exchange.exceptions import ExchangeError
 from storage.repositories import Repositories
-from trading.grid_manager import GridManager
+from trading.dca_manager import DCAManager
 from utils.logger import get_logger
 
 log = get_logger("trading")
 
 
 class OrderMonitor:
-    def __init__(self, repos: Repositories, order_manager, grid_manager: GridManager, poll_interval: int) -> None:
+    def __init__(
+        self,
+        repos: Repositories,
+        order_manager,
+        dca_manager: DCAManager,
+        poll_interval: int,
+    ) -> None:
         self._repos = repos
         self._order_manager = order_manager
-        self._grid_manager = grid_manager
+        self._dca_manager = dca_manager
         self._poll_interval = poll_interval
         self._running = False
         self._task: asyncio.Task | None = None
@@ -47,7 +53,7 @@ class OrderMonitor:
         while self._running:
             try:
                 await self._poll_once()
-            except Exception:  # noqa: BLE001 - never let the monitor die
+            except Exception:  # noqa: BLE001
                 log.exception("Order monitor cycle failed")
             await asyncio.sleep(self._poll_interval)
 
@@ -66,22 +72,20 @@ class OrderMonitor:
                 continue
 
             if refreshed.status == OrderStatus.FILLED.value:
-                await self._handle_fill(refreshed)
-
-    async def _handle_fill(self, order) -> None:
-        order_dict = {
-            "order_id": order.order_id,
-            "grid_id": order.grid_id,
-            "symbol": order.symbol,
-            "side": order.side,
-            "price": order.filled_price or order.price,
-            "quantity": order.quantity,
-            "level_index": order.level_index,
-        }
-        log.info("Order %s filled: %s %s @ %.8f", order.order_id, order.side, order.symbol, order_dict["price"])
-
-        if order.side == "buy":
-            levels = await self._repos.grid_levels.list_for_grid(order.grid_id)
-            await self._grid_manager.on_buy_filled(order.grid_id, order_dict, levels)
-        else:
-            await self._grid_manager.on_sell_filled(order.grid_id, order_dict)
+                fill_price = refreshed.filled_price or refreshed.price
+                fill_qty = refreshed.filled_quantity or refreshed.quantity
+                log.info(
+                    "Order %s filled: %s %s @ ₹%.2f qty %.8f",
+                    refreshed.order_id, refreshed.side, refreshed.symbol,
+                    fill_price, fill_qty,
+                )
+                try:
+                    await self._dca_manager.handle_order_filled(
+                        order_id=refreshed.order_id,
+                        fill_price=fill_price,
+                        fill_qty=fill_qty,
+                    )
+                except Exception:  # noqa: BLE001
+                    log.exception(
+                        "handle_order_filled failed for order %s", refreshed.order_id
+                    )

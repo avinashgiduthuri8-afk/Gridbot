@@ -1,14 +1,12 @@
 """CoinDCX REST API client.
 
-Implements authenticated + public CoinDCX endpoints behind the shared
+Implements authenticated and public CoinDCX endpoints behind the shared
 ExchangeClient interface, with automatic retry, rate-limit backoff, and
-timeout handling so the trading engine never has to deal with raw HTTP
-concerns.
+timeout handling so the trading engine never deals with raw HTTP concerns.
 
-CoinDCX auth scheme: every private request body must include a
-millisecond `timestamp`, and the request is signed with
-HMAC-SHA256(secret, json_body) sent as the `X-AUTH-SIGNATURE` header,
-alongside `X-AUTH-APIKEY`.
+CoinDCX auth scheme: every private request body must include a millisecond
+`timestamp`, signed with HMAC-SHA256(secret, json_body) sent as the
+`X-AUTH-SIGNATURE` header alongside `X-AUTH-APIKEY`.
 """
 
 from __future__ import annotations
@@ -28,7 +26,7 @@ from tenacity import (
 )
 
 from config.constants import OrderSide, OrderStatus
-from exchange.base import Balance, ExchangeClient, ExchangeOrder, Ticker, Trade
+from exchange.base import Balance, ExchangeClient, ExchangeOrder, MarketInfo, Ticker, Trade
 from exchange.exceptions import (
     ExchangeAuthError,
     ExchangeConnectionError,
@@ -44,7 +42,6 @@ log = get_logger("exchange")
 
 _RETRYABLE = (ExchangeRateLimitError, ExchangeTimeoutError, ExchangeConnectionError)
 
-# CoinDCX order status -> internal OrderStatus mapping.
 _STATUS_MAP = {
     "init": OrderStatus.PENDING.value,
     "open": OrderStatus.OPEN.value,
@@ -70,6 +67,7 @@ class CoinDCXClient(ExchangeClient):
         self._api_secret = api_secret.encode()
         self._base_url = base_url.rstrip("/")
         self._client = httpx.AsyncClient(base_url=self._base_url, timeout=15.0)
+        self._market_cache: dict[str, MarketInfo] = {}
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -108,18 +106,15 @@ class CoinDCXClient(ExchangeClient):
             log.warning("Connection error calling %s %s: %s", method, path, exc)
             raise ExchangeConnectionError(f"Connection error calling {path}") from exc
 
-        if response.status_code == 401 or response.status_code == 403:
+        if response.status_code in (401, 403):
             log.error("Auth rejected on %s: %s", path, response.text[:300])
             raise ExchangeAuthError(f"CoinDCX rejected credentials on {path}: {response.text[:200]}")
-
         if response.status_code == 429:
             log.warning("Rate limited on %s, backing off", path)
             raise ExchangeRateLimitError(f"Rate limited on {path}")
-
         if response.status_code >= 500:
             log.warning("Server error %s on %s", response.status_code, path)
             raise ExchangeConnectionError(f"CoinDCX server error {response.status_code} on {path}")
-
         if response.status_code >= 400:
             message = response.text[:300]
             log.error("Request rejected on %s: %s", path, message)
@@ -141,6 +136,39 @@ class CoinDCXClient(ExchangeClient):
             if entry.get("market") == symbol:
                 return Ticker(symbol=symbol, last_price=float(entry["last_price"]))
         raise ExchangeError(f"Symbol {symbol} not found in ticker response")
+
+    async def get_market_info(self, symbol: str) -> MarketInfo:
+        """Return precision and minimum-size rules for *symbol*.
+
+        Results are cached after the first fetch so subsequent calls
+        within the same process lifetime are free.
+        """
+        if symbol in self._market_cache:
+            return self._market_cache[symbol]
+        await self._load_market_details()
+        if symbol not in self._market_cache:
+            raise ExchangeError(f"Market {symbol} not found in CoinDCX market details")
+        return self._market_cache[symbol]
+
+    async def _load_market_details(self) -> None:
+        """Fetch all market details and populate the in-memory cache."""
+        data: list[dict[str, Any]] = await self._get_public("/exchange/v1/markets_details")
+        for item in data:
+            sym = item.get("coindcx_name", "")
+            if not sym:
+                continue
+            base_prec = int(item.get("base_currency_precision", 8))
+            quote_prec = int(item.get("quote_currency_precision", 2))
+            min_qty = float(item.get("min_quantity", 0) or 0)
+            min_amt = float(item.get("min_amount", 0) or 0)
+            self._market_cache[sym] = MarketInfo(
+                symbol=sym,
+                base_currency_precision=base_prec,
+                quote_currency_precision=quote_prec,
+                min_quantity=min_qty,
+                min_amount=min_amt,
+            )
+        log.info("Loaded market details for %d symbols", len(self._market_cache))
 
     # ------------------------------------------------------------------
     # Wallet
@@ -169,15 +197,21 @@ class CoinDCXClient(ExchangeClient):
     # ------------------------------------------------------------------
 
     async def place_order(
-        self, symbol: str, side: OrderSide, price: float, quantity: float
+        self,
+        symbol: str,
+        side: OrderSide,
+        price: float,
+        quantity: float,
+        order_type: str = "limit_order",
     ) -> ExchangeOrder:
-        body = {
+        body: dict[str, Any] = {
             "side": side.value,
-            "order_type": "limit_order",
+            "order_type": order_type,
             "market": symbol,
-            "price_per_unit": price,
             "total_quantity": quantity,
         }
+        if order_type == "limit_order":
+            body["price_per_unit"] = price
         data = await self._post_private("/exchange/v1/orders/create", body)
         orders = data.get("orders", [data]) if isinstance(data, dict) else data
         order = orders[0] if orders else data
@@ -188,8 +222,6 @@ class CoinDCXClient(ExchangeClient):
             await self._post_private("/exchange/v1/orders/cancel", {"id": exchange_order_id})
             return True
         except OrderRejectedError as exc:
-            # Already filled/cancelled orders reject cancellation; treat as
-            # a non-fatal outcome and let the order monitor reconcile state.
             log.info("Cancel for %s rejected (likely already closed): %s", exchange_order_id, exc)
             return False
 
@@ -212,7 +244,7 @@ class CoinDCXClient(ExchangeClient):
             body["market"] = symbol
         data = await self._post_private("/exchange/v1/orders/trade_history", body)
         trades = data if isinstance(data, list) else data.get("trades", [])
-        result = []
+        result: list[Trade] = []
         for t in trades:
             result.append(
                 Trade(
@@ -237,6 +269,7 @@ class CoinDCXClient(ExchangeClient):
             price=float(order.get("price_per_unit", 0) or 0),
             quantity=float(order.get("total_quantity", 0) or 0),
             filled_quantity=float(order.get("filled_quantity", 0) or 0),
+            filled_price=float(order.get("avg_price", 0) or order.get("price_per_unit", 0) or 0),
             status=_STATUS_MAP.get(raw_status, OrderStatus.OPEN.value),
             raw_status=raw_status,
         )

@@ -1,12 +1,13 @@
-"""Abstract exchange interface. Any exchange (CoinDCX today, others later)
-implements this contract so the trading engine never depends on a
-specific exchange's wire format.
+"""Abstract exchange interface and shared data structures.
+
+Any exchange integration (CoinDCX today, others later) implements
+ExchangeClient so the trading engine never depends on a specific wire format.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from config.constants import OrderSide
 
@@ -25,6 +26,20 @@ class Ticker:
 
 
 @dataclass
+class MarketInfo:
+    """Precision and minimum-size rules for a single trading pair."""
+    symbol: str
+    base_currency_precision: int
+    quote_currency_precision: int
+    min_quantity: float
+    min_amount: float
+    step_size: float = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.step_size = 10 ** (-self.base_currency_precision)
+
+
+@dataclass
 class ExchangeOrder:
     exchange_order_id: str
     symbol: str
@@ -32,6 +47,7 @@ class ExchangeOrder:
     price: float
     quantity: float
     filled_quantity: float
+    filled_price: float
     status: str
     raw_status: str
 
@@ -54,15 +70,22 @@ class ExchangeClient(ABC):
     async def get_ticker(self, symbol: str) -> Ticker: ...
 
     @abstractmethod
-    async def get_balances(self) -> list[Balance]:
-        ...
+    async def get_balances(self) -> list[Balance]: ...
 
     @abstractmethod
     async def get_balance(self, currency: str) -> Balance: ...
 
     @abstractmethod
+    async def get_market_info(self, symbol: str) -> MarketInfo: ...
+
+    @abstractmethod
     async def place_order(
-        self, symbol: str, side: OrderSide, price: float, quantity: float
+        self,
+        symbol: str,
+        side: OrderSide,
+        price: float,
+        quantity: float,
+        order_type: str = "limit_order",
     ) -> ExchangeOrder: ...
 
     @abstractmethod

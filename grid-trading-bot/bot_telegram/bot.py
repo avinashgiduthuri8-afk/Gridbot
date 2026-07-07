@@ -1,6 +1,6 @@
 """Telegram bot application wiring: builds the Application, registers all
-handlers, and exposes a small `BotAppContext` that every handler uses to
-reach the shared engine components (grid manager, repos, risk manager).
+handlers, and exposes `BotAppContext` that every handler uses to reach the
+shared engine components (DCA manager, repos, risk manager, etc.).
 """
 
 from __future__ import annotations
@@ -10,15 +10,15 @@ from dataclasses import dataclass
 from telegram import Update
 from telegram.ext import Application, ContextTypes
 
+from bot_telegram.conversations import build_newgrid_conversation
+from bot_telegram.handlers import register_handlers
 from config.settings import Settings
 from exchange.base import ExchangeClient
 from notifications.notifier import Notifier
 from risk.risk_manager import RiskManager
 from storage.repositories import Repositories
-from bot_telegram.conversations import build_startgrid_conversation
-from bot_telegram.handlers import register_handlers
 from trading.alert_manager import AlertManager
-from trading.grid_manager import GridManager
+from trading.dca_manager import DCAManager
 from utils.logger import get_logger
 
 log = get_logger("telegram")
@@ -29,7 +29,7 @@ class BotAppContext:
     settings: Settings
     repos: Repositories
     exchange: ExchangeClient
-    grid_manager: GridManager
+    dca_manager: DCAManager
     risk_manager: RiskManager
     notifier: Notifier
     alert_manager: AlertManager
@@ -49,7 +49,7 @@ def build_application(app_context: BotAppContext) -> Application:
         .build()
     )
 
-    application.add_handler(build_startgrid_conversation(app_context))
+    application.add_handler(build_newgrid_conversation(app_context))
     register_handlers(application, app_context)
     application.add_error_handler(_on_error)
 

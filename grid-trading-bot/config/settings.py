@@ -8,7 +8,7 @@ the app reads `os.environ` directly outside of this module.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
@@ -52,7 +52,7 @@ def _get_int(key: str, default: int) -> int:
 def _parse_ids(raw: str) -> tuple[int, ...]:
     if not raw:
         return ()
-    ids = []
+    ids: list[int] = []
     for chunk in raw.split(","):
         chunk = chunk.strip()
         if chunk:
