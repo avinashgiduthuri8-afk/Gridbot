@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 
 from telegram import InputFile, Update
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
@@ -40,6 +41,7 @@ HELP_TEXT = (
     "/summary — today's P&amp;L, lifetime profit, and grid standings\n"
     "/history &lt;symbol&gt; — recent buy/sell fills for a coin\n"
     "/export — download full trade history as a CSV file\n"
+    "/backup — download the raw SQLite database file\n"
     "/logs — recent log entries\n\n"
     "<b>Configuration</b>\n"
     "/settings — view saved per-coin settings\n"
@@ -156,6 +158,20 @@ def register_handlers(app, app_context: "BotAppContext") -> None:
             document=InputFile(io.BytesIO(csv_bytes), filename=filename),
             caption=f"Exported {len(trades)} trade(s).",
         )
+
+    @authorized
+    async def backup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        db_path = app_context.settings.database_path
+        if not os.path.exists(db_path):
+            await update.message.reply_text("Database file not found — no data yet.")
+            return
+        size_kb = os.path.getsize(db_path) / 1024
+        filename = f"grid_bot_backup_{now_iso()[:10]}.db"
+        with open(db_path, "rb") as f:
+            await update.message.reply_document(
+                document=InputFile(f, filename=filename),
+                caption=f"SQLite database backup ({size_kb:.1f} KB). Store safely — contains all grid configs and history.",
+            )
 
     @authorized
     async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -295,6 +311,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:
     app.add_handler(CommandHandler("summary", summary_cmd))
     app.add_handler(CommandHandler("history", history_cmd))
     app.add_handler(CommandHandler("export", export_cmd))
+    app.add_handler(CommandHandler("backup", backup_cmd))
     app.add_handler(CommandHandler("settings", settings_cmd))
     app.add_handler(CommandHandler("logs", logs_cmd))
     app.add_handler(CommandHandler("stopgrid", stopgrid_cmd))
