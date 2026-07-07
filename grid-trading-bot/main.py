@@ -17,6 +17,8 @@ from bot_telegram.bot import BotAppContext, build_application
 from bot_telegram.formatters import format_daily_summary
 from config.settings import ConfigError, load_settings
 from exchange.coindcx import CoinDCXClient
+from exchange.paper_exchange import PaperExchangeClient
+from trading.mixed_order_manager import MixedOrderManager
 from notifications.notifier import Notifier
 from risk.risk_manager import RiskManager
 from storage.database import Database
@@ -122,12 +124,19 @@ async def async_main() -> None:
 
     risk_manager = RiskManager(settings.risk, repos)
     order_manager = OrderManager(exchange, repos)
+    paper_exchange = PaperExchangeClient(exchange)
+    paper_order_manager = OrderManager(paper_exchange, repos)
+    mixed_order_manager = MixedOrderManager(
+        real=order_manager,
+        paper=paper_order_manager,
+        repos=repos,
+    )
     alert_manager = AlertManager()
 
     dca_manager = DCAManager(
         exchange=exchange,
         repos=repos,
-        order_manager=order_manager,
+        order_manager=mixed_order_manager,
         notifier=notifier,
         risk=risk_manager,
     )
@@ -141,7 +150,7 @@ async def async_main() -> None:
 
     order_monitor = OrderMonitor(
         repos=repos,
-        order_manager=order_manager,
+        order_manager=mixed_order_manager,
         dca_manager=dca_manager,
         poll_interval=settings.order_poll_interval_seconds,
     )

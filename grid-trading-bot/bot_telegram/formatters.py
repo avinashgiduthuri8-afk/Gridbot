@@ -7,9 +7,14 @@ def _status_emoji(status: str) -> str:
     return {"active": "🟢", "paused": "⏸", "stopped": "🛑", "completed": "🏁"}.get(status, "❓")
 
 
+def _mode_label(mode: str) -> str:
+    return "🟢 Paper Trade" if mode == "paper" else "🔴 Real Trade"
+
+
 def format_grid_summary(grid: dict) -> str:
     status = grid["status"]
     emoji = _status_emoji(status)
+    mode = grid.get("mode", "real")
     avg = grid["average_entry_price"]
     qty = grid["total_quantity"]
     invested = grid["total_investment"]
@@ -27,6 +32,7 @@ def format_grid_summary(grid: dict) -> str:
 
     return (
         f"{emoji} <b>{grid['symbol']}</b> — <code>{grid['grid_id']}</code>\n"
+        f"Mode: {_mode_label(mode)}\n"
         f"Status: {status.upper()} | Level: {grid['current_level']}/{grid['max_levels']}\n"
         f"Entry: ₹{grid['entry_price']:,.2f} | Dip: {grid['dip_percentage']}% | Profit: {grid['profit_percentage']}%\n"
         f"Stop loss: {grid['stop_loss_percentage']}%"
@@ -34,6 +40,56 @@ def format_grid_summary(grid: dict) -> str:
         f"{targets}\n"
         f"Realized profit: ₹{grid['realized_profit']:,.2f} | Sell cycles: {grid['completed_cycles']}"
     )
+
+
+def format_wallet_balance(balances: list, prices: dict[str, float]) -> str:
+    """Format wallet balance for display.
+
+    Args:
+        balances: list of Balance dataclass objects from exchange.get_balances().
+        prices: dict mapping currency (e.g. "BTC") to current INR price per coin.
+    """
+    inr = next((b for b in balances if b.currency.upper() == "INR"), None)
+    crypto_items = [b for b in balances if b.currency.upper() != "INR" and (b.balance + b.locked_balance) > 0]
+
+    lines = ["<b>💰 Wallet Balance</b>\n"]
+
+    if inr:
+        total_inr = inr.balance + inr.locked_balance
+        lines.append("<b>INR</b>")
+        lines.append(f"  Available: ₹{inr.balance:,.2f}")
+        if inr.locked_balance > 0:
+            lines.append(f"  Locked:    ₹{inr.locked_balance:,.2f}")
+        lines.append(f"  Total:     ₹{total_inr:,.2f}")
+    else:
+        lines.append("INR: ₹0.00")
+
+    total_asset_value = 0.0
+    if crypto_items:
+        lines.append("\n<b>Crypto Assets</b>")
+        for b in crypto_items:
+            total_qty = b.balance + b.locked_balance
+            price = prices.get(b.currency.upper())
+            if price:
+                value_inr = total_qty * price
+                total_asset_value += value_inr
+                locked_note = f" (locked: {b.locked_balance:.6f})" if b.locked_balance > 0 else ""
+                lines.append(
+                    f"  {b.currency}: {b.balance:.6f}{locked_note} "
+                    f"→ ₹{value_inr:,.2f} @ ₹{price:,.2f}"
+                )
+            else:
+                lines.append(f"  {b.currency}: {b.balance:.6f} (price unavailable)")
+
+    inr_balance = (inr.balance + inr.locked_balance) if inr else 0.0
+    total_portfolio = inr_balance + total_asset_value
+
+    lines.append(f"\n<b>Portfolio Total: ₹{total_portfolio:,.2f}</b>")
+    if total_asset_value > 0:
+        lines.append(f"  INR:    ₹{inr_balance:,.2f}")
+        lines.append(f"  Assets: ₹{total_asset_value:,.2f}")
+
+    return "\n".join(lines)
 
 
 def format_grid_list(grids: list[dict]) -> str:

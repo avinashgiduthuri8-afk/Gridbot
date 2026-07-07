@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS dca_grids (
     grid_id              TEXT PRIMARY KEY,
     symbol               TEXT NOT NULL,
     status               TEXT NOT NULL DEFAULT 'active',
+    mode                 TEXT NOT NULL DEFAULT 'real',
 
     entry_price          REAL NOT NULL,
     base_investment      REAL NOT NULL,
@@ -102,6 +103,10 @@ CREATE TABLE IF NOT EXISTS logs (
 CREATE INDEX IF NOT EXISTS idx_logs_channel ON logs(channel);
 """
 
+_MIGRATION_STMTS = [
+    "ALTER TABLE dca_grids ADD COLUMN mode TEXT NOT NULL DEFAULT 'real'",
+]
+
 
 class Database:
     """Thin async wrapper around a single shared aiosqlite connection."""
@@ -130,6 +135,12 @@ class Database:
         assert self._conn is not None
         await self._conn.executescript(SCHEMA)
         await self._conn.commit()
+        for stmt in _MIGRATION_STMTS:
+            try:
+                await self._conn.execute(stmt)
+                await self._conn.commit()
+            except Exception:
+                pass
         log.info("Database schema migration complete")
 
     async def close(self) -> None:

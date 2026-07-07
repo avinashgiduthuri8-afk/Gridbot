@@ -17,7 +17,9 @@ from bot_telegram.formatters import (
     format_positions,
     format_profit_summary,
     format_trade_history,
+    format_wallet_balance,
 )
+from exchange.exceptions import ExchangeAuthError, ExchangeError
 from bot_telegram.keyboards import clear_emergency_keyboard, grid_action_keyboard, main_menu_keyboard
 from utils.helpers import now_iso
 from utils.logger import get_logger
@@ -27,12 +29,13 @@ log = get_logger("telegram")
 HELP_TEXT = (
     "<b>Manual DCA Grid Trading Bot</b>\n\n"
     "<b>Grid control</b>\n"
-    "/newgrid — start a new DCA grid (guided 9-step setup)\n"
+    "/newgrid — start a new DCA grid (guided 10-step setup, choose paper or real)\n"
     "/stopgrid &lt;grid_id&gt; — stop a running grid\n"
     "/pause &lt;grid_id&gt; — pause a grid\n"
     "/resume &lt;grid_id&gt; — resume a paused grid\n\n"
     "<b>Monitoring</b>\n"
     "/status — bot overview and wallet balance\n"
+    "/balance — full real wallet breakdown with asset market values\n"
     "/grids — list all grids with DCA state\n"
     "/positions — coins currently held across all grids\n"
     "/profit — realized profit summary per grid\n"
@@ -145,6 +148,37 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
         symbol = context.args[0].upper()
         trades = await app_context.repos.trade_history.list_for_symbol(symbol, limit=20)
         await update.message.reply_text(format_trade_history(symbol, trades), parse_mode="HTML")
+
+    @authorized
+    async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await update.message.reply_text("⏳ Fetching wallet balance…")
+        try:
+            balances = await app_context.exchange.get_balances()
+        except ExchangeAuthError:
+            await update.message.reply_text(
+                "❌ Authentication failed. Check your CoinDCX API key and secret."
+            )
+            return
+        except ExchangeError as exc:
+            await update.message.reply_text(f"❌ Could not fetch wallet: {exc}")
+            return
+
+        crypto_items = [
+            b for b in balances
+            if b.currency.upper() != "INR" and (b.balance + b.locked_balance) > 0
+        ]
+
+        prices: dict[str, float] = {}
+        for b in crypto_items:
+            symbol = f"{b.currency.upper()}INR"
+            try:
+                ticker = await app_context.exchange.get_ticker(symbol)
+                prices[b.currency.upper()] = ticker.last_price
+            except Exception:  # noqa: BLE001
+                pass
+
+        text = format_wallet_balance(balances, prices)
+        await update.message.reply_text(text, parse_mode="HTML")
 
     @authorized
     async def logs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -379,6 +413,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
+    app.add_handler(CommandHandler("balance", balance_cmd))
     app.add_handler(CommandHandler("grids", grids_cmd))
     app.add_handler(CommandHandler("positions", positions_cmd))
     app.add_handler(CommandHandler("profit", profit_cmd))

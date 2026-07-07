@@ -2,7 +2,8 @@
 
 Steps:
   SYMBOL → ENTRY_PRICE → BASE_INVESTMENT → DIP_BUY_AMOUNT → DIP_PERCENTAGE
-  → PROFIT_SELL_AMOUNT → PROFIT_PERCENTAGE → MAX_LEVELS → STOP_LOSS → CONFIRM
+  → PROFIT_SELL_AMOUNT → PROFIT_PERCENTAGE → MAX_LEVELS → STOP_LOSS
+  → SELECT_MODE → CONFIRM
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from telegram.ext import (
     filters,
 )
 
-from bot_telegram.keyboards import coin_selection_keyboard, confirm_keyboard
+from bot_telegram.keyboards import coin_selection_keyboard, confirm_keyboard, trading_mode_keyboard
 from config.constants import (
     DEFAULT_DIP_PERCENTAGE,
     DEFAULT_MAX_LEVELS,
@@ -38,8 +39,9 @@ log = get_logger("telegram")
     PROFIT_PERCENTAGE,
     MAX_LEVELS,
     STOP_LOSS,
+    SELECT_MODE,
     CONFIRM,
-) = range(11)
+) = range(12)
 
 
 def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHandler:  # noqa: F821
@@ -284,6 +286,27 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             )
             return STOP_LOSS
 
+        await update.message.reply_text(
+            "Step 10 of 10: Choose your <b>trading mode</b>.\n\n"
+            "🟢 <b>Paper Trade</b> — simulate orders with no real money. "
+            "Great for testing your strategy safely.\n\n"
+            "🔴 <b>Real Trade</b> — execute actual orders on CoinDCX.",
+            parse_mode="HTML",
+            reply_markup=trading_mode_keyboard(),
+        )
+        return SELECT_MODE
+
+    # ------------------------------------------------------------------
+    # Step 10 — mode selection
+    # ------------------------------------------------------------------
+
+    async def mode_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        query = update.callback_query
+        await query.answer()
+        _, mode = query.data.split(":", 1)
+        context.user_data["mode"] = mode
+        mode_label = "🟢 Paper Trade" if mode == "paper" else "🔴 Real Trade"
+
         d = context.user_data
         price_label = f"₹{d['entry_price']:,.2f}" if d["entry_price"] > 0 else "market price"
         total_possible = d["base_investment"] + d["dip_buy_amount"] * (d["max_levels"] - 1)
@@ -292,6 +315,7 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             "<b>📋 DCA Grid Summary</b>\n\n"
             f"Coin: <b>{d['symbol']}</b>\n"
             f"Entry price: {price_label}\n"
+            f"Mode: {mode_label}\n"
             f"─────────────────────\n"
             f"Base investment:    ₹{d['base_investment']:,.2f}\n"
             f"Dip buy amount:     ₹{d['dip_buy_amount']:,.2f}\n"
@@ -306,7 +330,7 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             f"Max possible capital: ₹{total_possible:,.2f}\n\n"
             "Confirm to start this DCA grid?"
         )
-        await update.message.reply_text(summary, parse_mode="HTML", reply_markup=confirm_keyboard())
+        await query.edit_message_text(summary, parse_mode="HTML", reply_markup=confirm_keyboard())
         return CONFIRM
 
     # ------------------------------------------------------------------
@@ -364,6 +388,7 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             PROFIT_PERCENTAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, profit_percentage_entered)],
             MAX_LEVELS: [MessageHandler(filters.TEXT & ~filters.COMMAND, max_levels_entered)],
             STOP_LOSS: [MessageHandler(filters.TEXT & ~filters.COMMAND, stop_loss_entered)],
+            SELECT_MODE: [CallbackQueryHandler(mode_selected, pattern="^pick_mode:")],
             CONFIRM: [CallbackQueryHandler(confirm, pattern="^confirm_grid:")],
         },
         fallbacks=[MessageHandler(filters.Regex(r"^/cancel$"), cancel)],

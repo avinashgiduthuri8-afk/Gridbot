@@ -34,16 +34,16 @@ class DCAGridRepository:
     async def create(self, grid: DCAGridRecord) -> None:
         await self._db.connection.execute(
             """INSERT INTO dca_grids
-                   (grid_id, symbol, status,
+                   (grid_id, symbol, status, mode,
                     entry_price, base_investment, dip_buy_amount, dip_percentage,
                     profit_sell_amount, profit_percentage, max_levels, stop_loss_percentage,
                     current_level, total_quantity, total_investment, average_entry_price,
                     last_buy_price, next_buy_price, next_sell_price,
                     realized_profit, completed_cycles,
                     created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                grid.grid_id, grid.symbol, grid.status,
+                grid.grid_id, grid.symbol, grid.status, grid.mode,
                 grid.entry_price, grid.base_investment, grid.dip_buy_amount,
                 grid.dip_percentage, grid.profit_sell_amount, grid.profit_percentage,
                 grid.max_levels, grid.stop_loss_percentage,

@@ -75,10 +75,15 @@ class DCAManager:
         profit_pct: float = float(params["profit_percentage"])
         max_levels: int = int(params["max_levels"])
         stop_loss_pct: float = float(params["stop_loss_percentage"])
+        mode: str = str(params.get("mode", "real"))
 
-        wallet = await self._exchange.get_balance("INR")
+        if mode == "paper":
+            wallet_balance = 1_000_000.0
+        else:
+            wallet = await self._exchange.get_balance("INR")
+            wallet_balance = wallet.balance
         risk_result = await self._risk.check_can_start_grid(
-            symbol, base_investment, wallet.balance
+            symbol, base_investment, wallet_balance
         )
         if not risk_result.allowed:
             raise ValueError(risk_result.reason)
@@ -97,6 +102,7 @@ class DCAManager:
             grid_id=grid_id,
             symbol=symbol,
             status=GridStatus.ACTIVE.value,
+            mode=mode,
             entry_price=entry_price,
             base_investment=base_investment,
             dip_buy_amount=dip_buy_amount,

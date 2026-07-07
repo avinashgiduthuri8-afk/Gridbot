@@ -12,6 +12,11 @@ class GridStatus(str, Enum):
     COMPLETED = "completed"
 
 
+class TradingMode(str, Enum):
+    PAPER = "paper"
+    REAL = "real"
+
+
 class OrderSide(str, Enum):
     BUY = "buy"
     SELL = "sell"

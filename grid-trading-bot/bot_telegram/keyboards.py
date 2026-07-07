@@ -58,6 +58,17 @@ def clear_emergency_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def trading_mode_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("🟢 Paper Trade", callback_data="pick_mode:paper"),
+                InlineKeyboardButton("🔴 Real Trade", callback_data="pick_mode:real"),
+            ]
+        ]
+    )
+
+
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
