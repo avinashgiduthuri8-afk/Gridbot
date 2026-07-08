@@ -940,9 +940,7 @@ class TestCrashRecovery:
         for o in [submitted_no_id, submitted_with_id, pending_no_id]:
             await repos.orders.create(o)
 
-        result = await repos.repos.orders.list_submitted_no_exchange_id() \
-            if hasattr(repos, "repos") else \
-            await repos.orders.list_submitted_no_exchange_id()
+        result = await repos.orders.list_submitted_no_exchange_id()
         ids = {r["order_id"] for r in result}
         assert submitted_no_id.order_id in ids
         assert submitted_with_id.order_id not in ids
@@ -1047,3 +1045,226 @@ class TestMixedPaperAndReal:
         # The notification kwargs should include mode
         kwargs = calls[0][2]
         assert kwargs.get("mode") == "paper"
+
+
+# ===========================================================================
+# 9. Idempotent fill handling (double-process guard)
+# ===========================================================================
+
+
+class TestFillIdempotency:
+    @pytest.mark.anyio
+    async def test_handle_order_filled_twice_does_not_double_apply(
+        self, dca_manager, repos, mock_exchange
+    ):
+        """Calling handle_order_filled twice for the same order must only
+        mutate grid state once (guarded by trade_history lookup)."""
+        grid = _make_grid(current_level=1, total_quantity=0.00925,
+                          total_investment=499.5, average_entry_price=54000.0)
+        await repos.grids.create(grid)
+
+        order = _make_order(grid.grid_id, side="buy",
+                            status=OrderStatus.OPEN.value,
+                            exchange_order_id="EX_DOUBLE",
+                            quantity=0.001)
+        await repos.orders.create(order)
+        await repos.orders.update_status(order.order_id, OrderStatus.FILLED.value,
+                                         filled_quantity=0.001, filled_price=54000.0)
+
+        await dca_manager.handle_order_filled(order.order_id, 54000.0, 0.001)
+        grid_after_first = await repos.grids.get(grid.grid_id)
+
+        # Call again with the same order_id — should be a no-op
+        await dca_manager.handle_order_filled(order.order_id, 54000.0, 0.001)
+        grid_after_second = await repos.grids.get(grid.grid_id)
+
+        assert grid_after_first["current_level"] == grid_after_second["current_level"]
+        assert grid_after_first["total_quantity"] == grid_after_second["total_quantity"]
+
+        trades = await repos.trade_history.list_for_grid(grid.grid_id)
+        assert len(trades) == 1  # only one trade record, not two
+
+    @pytest.mark.anyio
+    async def test_recovery_does_not_double_process_already_recorded_fill(
+        self, recovery, repos, mock_exchange
+    ):
+        """If recovery runs twice (e.g. two crashes before restart), the second
+        run must not double-apply an already-processed fill."""
+        grid = _make_grid()
+        await repos.grids.create(grid)
+
+        order = _make_order(grid.grid_id, status=OrderStatus.OPEN.value,
+                            exchange_order_id="EX_RECOVERY_TWICE")
+        await repos.orders.create(order)
+        mock_exchange.status_overrides["EX_RECOVERY_TWICE"] = _filled_ex_order(
+            "EX_RECOVERY_TWICE"
+        )
+
+        await recovery.recover()
+        grid_after_first = await repos.grids.get(grid.grid_id)
+
+        # Run recovery again — order is now FILLED locally, list_open() won't
+        # return it, so no double-processing should occur regardless.
+        await recovery.recover()
+        grid_after_second = await repos.grids.get(grid.grid_id)
+
+        assert grid_after_first["current_level"] == grid_after_second["current_level"]
+        trades = await repos.trade_history.list_for_grid(grid.grid_id)
+        assert len(trades) == 1
+
+
+# ===========================================================================
+# 10. Uncertain order linking after transient placement failure
+# ===========================================================================
+
+
+class TestUncertainOrderLinking:
+    @pytest.mark.anyio
+    async def test_transient_failure_links_when_single_exchange_match_found(
+        self, order_manager, repos, mock_exchange
+    ):
+        """If a timeout occurs but the exchange actually has exactly one matching
+        open order, the local order should be linked to it instead of left dangling."""
+        mock_exchange.place_exception = ExchangeTimeoutError("timed out")
+        mock_exchange.open_orders_override = [
+            _open_ex_order("EX_LANDED", side="buy", price=54000.0, quantity=0.001)
+        ]
+        grid = _make_grid()
+        await repos.grids.create(grid)
+
+        with pytest.raises(ExchangeTimeoutError):
+            await order_manager.place_dca_order(
+                grid_id=grid.grid_id, symbol="BTCINR",
+                side="buy", price=54000.0, quantity=0.001,
+            )
+
+        orders = await repos.orders.list_for_grid(grid.grid_id)
+        assert orders[0]["exchange_order_id"] == "EX_LANDED"
+        assert orders[0]["status"] == OrderStatus.OPEN.value
+
+    @pytest.mark.anyio
+    async def test_transient_failure_marks_failed_when_no_match(
+        self, order_manager, repos, mock_exchange
+    ):
+        mock_exchange.place_exception = ExchangeTimeoutError("timed out")
+        mock_exchange.open_orders_override = []
+        grid = _make_grid()
+        await repos.grids.create(grid)
+
+        with pytest.raises(ExchangeTimeoutError):
+            await order_manager.place_dca_order(
+                grid_id=grid.grid_id, symbol="BTCINR",
+                side="buy", price=54000.0, quantity=0.001,
+            )
+
+        orders = await repos.orders.list_for_grid(grid.grid_id)
+        assert orders[0]["status"] == OrderStatus.FAILED.value
+        assert orders[0]["exchange_order_id"] is None
+
+    @pytest.mark.anyio
+    async def test_transient_failure_marks_failed_when_ambiguous_matches(
+        self, order_manager, repos, mock_exchange
+    ):
+        """Two candidate matches on the exchange must NOT be auto-linked;
+        the order is marked FAILED to avoid mis-attribution."""
+        mock_exchange.place_exception = ExchangeTimeoutError("timed out")
+        mock_exchange.open_orders_override = [
+            _open_ex_order("EX_CANDIDATE_1", side="buy", price=54000.0, quantity=0.001),
+            _open_ex_order("EX_CANDIDATE_2", side="buy", price=54010.0, quantity=0.00101),
+        ]
+        grid = _make_grid()
+        await repos.grids.create(grid)
+
+        with pytest.raises(ExchangeTimeoutError):
+            await order_manager.place_dca_order(
+                grid_id=grid.grid_id, symbol="BTCINR",
+                side="buy", price=54000.0, quantity=0.001,
+            )
+
+        orders = await repos.orders.list_for_grid(grid.grid_id)
+        assert orders[0]["status"] == OrderStatus.FAILED.value
+        assert orders[0]["exchange_order_id"] is None
+
+
+# ===========================================================================
+# 11. Recovery: price-aware matching and mode-aware orphan detection
+# ===========================================================================
+
+
+class TestRecoveryHardening:
+    @pytest.mark.anyio
+    async def test_submitted_order_with_price_mismatch_is_not_linked(
+        self, recovery, repos, mock_exchange
+    ):
+        """Same qty but wildly different price must not be linked (guards against
+        mis-attributing a different limit order at the same size)."""
+        grid = _make_grid()
+        await repos.grids.create(grid)
+
+        order = _make_order(
+            grid.grid_id, status=OrderStatus.SUBMITTED.value,
+            exchange_order_id=None, quantity=0.01, price=54000.0,
+        )
+        await repos.orders.create(order)
+
+        # Same qty, but price is 20% off — should not match
+        far_price = _open_ex_order("EX_FAR_PRICE", quantity=0.01, price=65000.0)
+        mock_exchange.open_orders_override = [far_price]
+
+        await recovery.recover()
+
+        db_order = await repos.orders.get(order.order_id)
+        assert db_order["status"] == OrderStatus.FAILED.value
+        assert db_order["exchange_order_id"] is None
+
+    @pytest.mark.anyio
+    async def test_submitted_order_ambiguous_matches_marked_failed(
+        self, recovery, repos, mock_exchange
+    ):
+        grid = _make_grid()
+        await repos.grids.create(grid)
+
+        order = _make_order(
+            grid.grid_id, status=OrderStatus.SUBMITTED.value,
+            exchange_order_id=None, quantity=0.01, price=54000.0,
+        )
+        await repos.orders.create(order)
+
+        mock_exchange.open_orders_override = [
+            _open_ex_order("EX_AMBIG_1", quantity=0.01, price=54000.0),
+            _open_ex_order("EX_AMBIG_2", quantity=0.0101, price=54100.0),
+        ]
+
+        await recovery.recover()
+
+        db_order = await repos.orders.get(order.order_id)
+        assert db_order["status"] == OrderStatus.FAILED.value
+
+    @pytest.mark.anyio
+    async def test_orphan_detection_skips_paper_grids(
+        self, repos, mock_exchange, mock_notifier, permissive_risk_settings
+    ):
+        """Orphan detection must not query the real exchange for paper-mode grids,
+        avoiding false positives from unrelated real orders on the same symbol."""
+        paper_grid = _make_grid(symbol="ETHINR", mode="paper")
+        await repos.grids.create(paper_grid)
+
+        # Real exchange has an unrelated open order for ETHINR
+        mock_exchange.open_orders_override = [
+            _open_ex_order("EX_UNRELATED_REAL", symbol="ETHINR")
+        ]
+
+        risk = RiskManager(permissive_risk_settings, repos)
+        real_om = OrderManager(mock_exchange, repos)
+        dca = DCAManager(
+            exchange=mock_exchange, repos=repos,
+            order_manager=real_om, notifier=mock_notifier, risk=risk,
+        )
+        rec = RecoveryManager(
+            exchange=mock_exchange, repos=repos,
+            notifier=mock_notifier, dca_manager=dca,
+        )
+
+        summary = await rec.recover()
+        # No orphans should be reported since the only active grid is paper-mode
+        assert summary.get("orphans_found", 0) == 0

@@ -262,6 +262,17 @@ class TradeHistoryRepository:
         )
         await self._db.connection.commit()
 
+    async def get_by_order_id(self, order_id: str) -> dict[str, Any] | None:
+        """Return the trade history record for a specific order, if one exists.
+        Used as an idempotency guard in handle_order_filled.
+        """
+        cur = await self._db.connection.execute(
+            "SELECT * FROM trade_history WHERE order_id = ? LIMIT 1",
+            (order_id,),
+        )
+        row = await cur.fetchone()
+        return _row(row) if row else None
+
     async def list_for_grid(self, grid_id: str, limit: int = 50) -> list[dict[str, Any]]:
         cur = await self._db.connection.execute(
             "SELECT * FROM trade_history WHERE grid_id = ? ORDER BY executed_at DESC LIMIT ?",

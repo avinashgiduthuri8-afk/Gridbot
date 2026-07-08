@@ -99,13 +99,24 @@ class OrderManager:
             )
         except _UNCERTAIN_ERRORS as exc:
             # Exchange may or may not have received the request.
-            # Mark FAILED but log clearly so recovery can investigate.
-            await self._repos.orders.update_status(order_id, OrderStatus.FAILED.value)
+            # Immediately check for a matching open order on the exchange so we
+            # can link it if it landed, rather than blocking the grid indefinitely
+            # in SUBMITTED state or risking a duplicate on the next trigger.
             log.warning(
-                "order.failed   order=%s grid=%s symbol=%s side=%s "
-                "reason=transient_uncertain type=%s detail=%s",
+                "order.uncertain order=%s grid=%s symbol=%s side=%s "
+                "type=%s detail=%s — querying exchange for match",
                 order_id, grid_id, symbol, side, type(exc).__name__, exc,
             )
+            linked = await self._try_link_uncertain_order(
+                order_id, symbol, side, quantity, price
+            )
+            if not linked:
+                await self._repos.orders.update_status(order_id, OrderStatus.FAILED.value)
+                log.warning(
+                    "order.failed   order=%s grid=%s symbol=%s side=%s "
+                    "reason=transient_no_exchange_match",
+                    order_id, grid_id, symbol, side,
+                )
             raise
         except InsufficientBalanceError as exc:
             await self._repos.orders.update_status(order_id, OrderStatus.FAILED.value)
@@ -152,6 +163,80 @@ class OrderManager:
         record.filled_quantity = ex_order.filled_quantity
         record.filled_price = ex_order.filled_price
         return record
+
+    async def _try_link_uncertain_order(
+        self,
+        order_id: str,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float,
+        qty_tolerance: float = 0.02,
+        price_tolerance: float = 0.05,
+    ) -> bool:
+        """After a transient placement failure, query the exchange for a matching
+        open order and link it if exactly one unambiguous match is found.
+
+        Matching criteria: same side, quantity within qty_tolerance, price within
+        price_tolerance.  If zero or multiple matches are found we return False
+        (the caller should mark the order FAILED and let the grid retry).
+
+        Returns True if the order was successfully linked to an exchange order.
+        """
+        try:
+            open_orders = await self._exchange.get_open_orders(symbol=symbol)
+        except Exception:  # noqa: BLE001
+            log.warning(
+                "_try_link_uncertain_order: get_open_orders(%s) failed, cannot link %s",
+                symbol, order_id,
+            )
+            return False
+
+        def _qty_ok(ex_qty: float) -> bool:
+            if quantity <= 0 or ex_qty <= 0:
+                return False
+            return abs(ex_qty - quantity) / quantity <= qty_tolerance
+
+        def _price_ok(ex_price: float) -> bool:
+            if price <= 0 or ex_price <= 0:
+                return True  # market orders may have price=0 on both sides
+            return abs(ex_price - price) / price <= price_tolerance
+
+        candidates = [
+            o for o in open_orders
+            if (o.side if isinstance(o.side, str) else o.side.value) == side
+            and _qty_ok(float(o.quantity or 0))
+            and _price_ok(float(o.price or 0))
+        ]
+
+        if len(candidates) == 0:
+            log.info(
+                "_try_link_uncertain_order: no match for %s %s qty=%.8f — order did not land",
+                side, symbol, quantity,
+            )
+            return False
+
+        if len(candidates) > 1:
+            log.warning(
+                "_try_link_uncertain_order: %d ambiguous matches for %s %s qty=%.8f "
+                "— refusing to link, marking FAILED",
+                len(candidates), side, symbol, quantity,
+            )
+            return False
+
+        match = candidates[0]
+        await self._repos.orders.update_status(
+            order_id,
+            match.status,
+            exchange_order_id=match.exchange_order_id,
+            filled_quantity=match.filled_quantity,
+            filled_price=match.filled_price,
+        )
+        log.info(
+            "_try_link_uncertain_order: linked %s → exchange %s (status=%s qty=%.8f)",
+            order_id, match.exchange_order_id, match.status, float(match.quantity or 0),
+        )
+        return True
 
     async def cancel_order(self, order_id: str) -> bool:
         order = await self._repos.orders.get(order_id)

@@ -249,10 +249,26 @@ class DCAManager:
     async def handle_order_filled(
         self, order_id: str, fill_price: float, fill_qty: float
     ) -> None:
-        """Update DCA grid state after an order has been confirmed as filled."""
+        """Update DCA grid state after an order has been confirmed as filled.
+
+        Idempotency guard: checks trade_history for an existing record for this
+        order_id before applying mutations.  Safe to call from both OrderMonitor
+        and RecoveryManager without risk of double-applying a fill.
+        """
         order = await self._repos.orders.get(order_id)
         if not order:
             log.warning("handle_order_filled called for unknown order %s", order_id)
+            return
+
+        # Idempotency: if a trade record already exists for this order, the fill
+        # was already processed (e.g. by a previous recovery run or poll cycle).
+        existing_trade = await self._repos.trade_history.get_by_order_id(order_id)
+        if existing_trade:
+            log.info(
+                "handle_order_filled: fill for order %s already recorded "
+                "(trade %s) — skipping to prevent double-apply",
+                order_id, existing_trade["trade_id"],
+            )
             return
 
         grid_id: str = order["grid_id"]
@@ -263,7 +279,6 @@ class DCAManager:
 
         actual_price = fill_price if fill_price > 0 else order["price"]
         actual_qty = fill_qty if fill_qty > 0 else order["quantity"]
-        symbol: str = grid["symbol"]
 
         if order["side"] == "buy":
             await self._on_buy_filled(grid, order_id, actual_price, actual_qty)

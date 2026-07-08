@@ -90,12 +90,15 @@ def dca_manager(mock_exchange, repos, order_manager, mock_notifier, permissive_r
 
 
 @pytest.fixture
-def monitor(repos, order_manager, dca_manager):
+def monitor(repos, order_manager, dca_manager, mock_notifier, mock_exchange):
     return OrderMonitor(
         repos=repos,
         order_manager=order_manager,
         dca_manager=dca_manager,
+        notifier=mock_notifier,
+        exchange=mock_exchange,
         poll_interval=1,
+        sync_every_n_cycles=1000,  # disable auto-sync in legacy tests
     )
 
 
@@ -224,8 +227,12 @@ async def test_monitor_start_and_stop():
     om_mock = MagicMock()
     dm_mock = MagicMock()
 
+    notifier_mock = MagicMock()
+    exchange_mock = MagicMock()
+    exchange_mock.get_open_orders = AsyncMock(return_value=[])
     mon = OrderMonitor(repos=repos_mock, order_manager=om_mock,
-                       dca_manager=dm_mock, poll_interval=100)
+                       dca_manager=dm_mock, notifier=notifier_mock,
+                       exchange=exchange_mock, poll_interval=100)
     mon.start()
     assert mon._task is not None
     assert not mon._task.done()
