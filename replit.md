@@ -1,45 +1,73 @@
-# [Project name]
+# Manual Grid Trading Bot for CoinDCX
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A production-ready Python bot that runs manual grid trading strategies on [CoinDCX](https://coindcx.com), controlled entirely through Telegram. There is no web UI — all interaction happens via Telegram commands.
 
-## Run & Operate
+## What this bot does
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- You send `/startgrid` in Telegram and walk through a guided setup: choose a coin, set a price range and grid count, specify investment amount.
+- The bot places buy/sell orders at each grid level and re-places orders as they fill, cycling profits through the grid.
+- Risk limits cap total capital, per-coin exposure, and daily losses.
+- On restart, `trading/recovery.py` reconciles live order state from CoinDCX and resumes all active grids automatically.
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- **Python** (asyncio) — `python-telegram-bot`, `httpx`, `aiosqlite`
+- **SQLite** — local database at `data/grid_bot.db` (all state, no external DB)
+- **CoinDCX REST API** — order placement and status
+- **Telegram Bot API** — entire user interface
 
-## Where things live
+## Project layout
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+```
+grid-trading-bot/
+├── main.py                  # Entrypoint — wires everything together
+├── config/settings.py       # Loads all config from env vars
+├── bot_telegram/            # Telegram command handlers, keyboards, formatters
+├── trading/                 # Core engine: DCA manager, order monitor, price monitor, recovery
+├── exchange/                # CoinDCX API client (+ paper exchange stub)
+├── grid/                    # Grid price generation (arithmetic/geometric)
+├── risk/                    # Risk manager (capital limits, daily loss halts)
+├── storage/                 # SQLite database, models, repositories
+├── notifications/           # Telegram notifier wrapper
+├── tests/                   # pytest suite (no live API or Telegram needed)
+└── requirements.txt
+```
 
-## Architecture decisions
+## Running the bot
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+The bot is **not currently configured to run** — it needs credentials first.
 
-## Product
+### Required secrets (set as Replit Secrets or in a `.env` file)
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+| Variable | Description |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | From @BotFather on Telegram |
+| `TELEGRAM_CHAT_ID` | Your numeric Telegram user ID (from @userinfobot) |
+| `COINDCX_API_KEY` | From the CoinDCX API settings page |
+| `COINDCX_API_SECRET` | From the CoinDCX API settings page |
+
+### Optional configuration (with defaults)
+
+See `grid-trading-bot/.env.example` for the full list of tunable parameters (risk limits, poll intervals, log level, etc.).
+
+### Start command
+
+```bash
+cd grid-trading-bot && python main.py
+```
+
+### Running tests
+
+```bash
+cd grid-trading-bot && python -m pytest tests/ -v
+```
+
+## Important notes
+
+- **This bot places real orders with real money** once configured with live CoinDCX credentials.
+- There is no paper-trading / simulation mode.
+- Only Telegram user IDs listed in `TELEGRAM_CHAT_ID` / `TELEGRAM_ALLOWED_USER_IDS` can control the bot.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
-
-## Gotchas
-
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+*(none recorded yet)*
