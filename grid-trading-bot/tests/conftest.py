@@ -72,6 +72,7 @@ class MockExchange(ExchangeClient):
         self.open_orders_override: list[ExchangeOrder] | None = None
         self.status_overrides: dict[str, ExchangeOrder] = {}
         self._order_counter: int = 0
+        self.market_info_override: "MarketInfo | None" = None
 
     async def get_ticker(self, symbol: str) -> Ticker:
         return Ticker(symbol=symbol, last_price=self.ticker_price)
@@ -83,6 +84,8 @@ class MockExchange(ExchangeClient):
         return Balance(currency.upper(), self.inr_balance, 0.0)
 
     async def get_market_info(self, symbol: str) -> MarketInfo:
+        if self.market_info_override is not None:
+            return self.market_info_override
         return MarketInfo(
             symbol=symbol,
             base_currency_precision=2,
