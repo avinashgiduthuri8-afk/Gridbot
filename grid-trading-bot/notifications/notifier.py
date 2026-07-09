@@ -7,6 +7,9 @@ python-telegram-bot Application object directly.
 
 from __future__ import annotations
 
+import asyncio
+import time
+
 from telegram import Bot
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
@@ -16,22 +19,47 @@ from utils.logger import get_logger
 
 log = get_logger("telegram")
 
+# Minimum seconds between repeated sync-error notifications for the same context.
+# Prevents message floods during sustained API degradation.
+_SYNC_ERROR_COOLDOWN_SECONDS = 600  # 10 minutes
+
 
 class Notifier:
     def __init__(self, bot: Bot, chat_ids: tuple[int, ...]) -> None:
         self._bot = bot
         self._chat_ids = chat_ids
+        # Tracks when each sync-error context was last notified (monotonic seconds).
+        self._last_sync_error_notified: dict[str, float] = {}
 
     async def send(self, message: str) -> None:
+        """Send *message* to all configured chat IDs concurrently.
+
+        Messages longer than Telegram's limit are truncated at a tag-safe
+        boundary so the HTML parser is not left mid-tag.
+        """
         if len(message) > TELEGRAM_MAX_MESSAGE_LENGTH:
-            message = message[: TELEGRAM_MAX_MESSAGE_LENGTH - 20] + "\n...(truncated)"
-        for chat_id in self._chat_ids:
-            try:
-                await self._bot.send_message(
-                    chat_id=chat_id, text=message, parse_mode=ParseMode.HTML
-                )
-            except TelegramError as exc:
-                log.error("Failed to notify chat %s: %s", chat_id, exc)
+            # Reserve enough room for the truncation notice and strip any
+            # partially-written HTML tag so Telegram's parser doesn't choke.
+            cutoff = TELEGRAM_MAX_MESSAGE_LENGTH - 40
+            snippet = message[:cutoff]
+            # Walk back from the cut to avoid splitting inside an HTML tag.
+            last_open = snippet.rfind("<")
+            if last_open != -1 and ">" not in snippet[last_open:]:
+                snippet = snippet[:last_open]
+            message = snippet.rstrip() + "\n\n<i>… message truncated</i>"
+
+        await asyncio.gather(
+            *[self._send_to(chat_id, message) for chat_id in self._chat_ids],
+            return_exceptions=True,
+        )
+
+    async def _send_to(self, chat_id: int, message: str) -> None:
+        try:
+            await self._bot.send_message(
+                chat_id=chat_id, text=message, parse_mode=ParseMode.HTML
+            )
+        except TelegramError as exc:
+            log.error("Failed to notify chat %s: %s", chat_id, exc)
 
     # ------------------------------------------------------------------
     # Grid lifecycle events
@@ -285,8 +313,41 @@ class Notifier:
             )
 
     async def sync_error(self, context: str, message: str) -> None:
+        """Send a sync-error notification, suppressing repeats within the cooldown window.
+
+        During sustained API degradation the monitor may call this every few seconds.
+        We send the first occurrence immediately, then stay silent for
+        ``_SYNC_ERROR_COOLDOWN_SECONDS`` before sending again for the same context.
+        """
+        now = time.monotonic()
+        last = self._last_sync_error_notified.get(context, 0.0)
+        if now - last < _SYNC_ERROR_COOLDOWN_SECONDS:
+            log.warning(
+                "Suppressing repeated sync-error notification for '%s' "
+                "(last sent %.0fs ago, cooldown %ds)",
+                context,
+                now - last,
+                _SYNC_ERROR_COOLDOWN_SECONDS,
+            )
+            return
+        self._last_sync_error_notified[context] = now
         await self.send(
             f"⚠️ <b>Sync Error — {context}</b>\n<code>{message[:200]}</code>"
+        )
+
+    async def emergency_cleared(self, user_id: int | None = None) -> None:
+        """Notify that the emergency stop has been lifted and trading may resume."""
+        who = f" by user <code>{user_id}</code>" if user_id else ""
+        await self.send(
+            f"✅ <b>Emergency Stop Cleared{who}</b>\n"
+            "Trading will resume on the next grid trigger."
+        )
+
+    async def grid_deleted(self, symbol: str, grid_id: str) -> None:
+        """Notify that a grid was permanently deleted."""
+        await self.send(
+            f"🗑 <b>Grid Deleted</b>\n"
+            f"Coin: <b>{symbol}</b> | Grid: <code>{grid_id}</code>"
         )
 
     async def error(self, context: str, message: str) -> None:
