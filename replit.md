@@ -68,6 +68,53 @@ cd grid-trading-bot && python -m pytest tests/ -v
 - There is no paper-trading / simulation mode.
 - Only Telegram user IDs listed in `TELEGRAM_CHAT_ID` / `TELEGRAM_ALLOWED_USER_IDS` can control the bot.
 
+## Project Roadmap
+
+Consolidated list of 40 planned items, in rough priority order:
+
+| # | Item | Audit Ref |
+|---|---|---|
+| 1 | Exchange validation audit | H-01, H-02, M-09 |
+| 2 | Shared validation everywhere | M-01, M-02 |
+| 3 | Production hardening | H-03–H-08, M-03–M-08 |
+| 4 | End-to-end verification | — |
+| 5 | Long-duration paper trading | M-10 |
+| 6 | Restart recovery verification | C-05 |
+| 7 | Duplicate order prevention | H-02 |
+| 8 | Dynamic price formatting | — |
+| 9 | Next Buy price display | — |
+| 10 | Next Sell price display | — |
+| 11 | Capital usage display | H-06 |
+| 12 | Real wallet /balance | — |
+| 13 | Better /coininfo | — |
+| 14 | Persistent database across redeploys | — |
+| 15 | Automatic Google Drive backup | C-02 |
+| 16 | Dust position management | H-08 |
+| 17 | Order synchronization with CoinDCX | C-05 |
+| 18 | Better Telegram notifications | M-03, M-04, M-05, M-06 |
+| 19 | Daily P&L summary | — |
+| 20 | CoinDCX webhooks (V2) | L-09 |
+| 21 | Web Dashboard | — |
+| 22 | Dashboard Server/API | — |
+| 23 | Trailing Take-Profit | — |
+| 24 | Manual Buy/Sell commands | L-05 |
+| 25 | Fix Paper/Real routing safety bug | C-01 |
+| 26 | Persist price alerts | C-04 |
+| 27 | API polling optimization & caching | H-01 |
+| 28 | Rate-limit backoff | H-03 |
+| 29 | Transaction-safe grid creation | H-04 |
+| 30 | Database migration/versioning | H-05 |
+| 31 | Risk manager based on total grid exposure | H-06 |
+| 32 | Concurrency protection | H-07 |
+| 33 | Earlier symbol validation in /newgrid | M-01 |
+| 34 | Graceful shutdown | M-08 |
+| 35 | Realistic paper trading (slippage/latency) | M-10 |
+| 36 | Docker & CI/CD | L-01 |
+| 37 | Live CoinDCX integration tests | L-02 |
+| 38 | Telegram command & conversation tests | L-03 |
+| 39 | /adjustgrid command | L-04 |
+| 40 | Performance & security audit before live deployment | — |
+
 ## User preferences
 
 *(none recorded yet)*
