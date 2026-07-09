@@ -37,20 +37,29 @@ from trading.coin_validator import CoinValidator, ValidationResult
 
 def _make_market_info(
     symbol: str = "BNBINR",
-    base_prec: int = 5,
-    quote_prec: int = 2,
+    base_prec: int = 2,
+    target_prec: int = 5,
     min_qty: float = 0.01,
     min_amt: float = 100.0,
+    step_size: float | None = None,
     status: str = "active",
     base_short: str = "BNB",
     target_short: str = "INR",
 ) -> MarketInfo:
+    """Build a MarketInfo for tests.
+
+    ``base_prec`` controls price-precision only. ``target_prec`` controls the
+    traded coin's quantity precision and is used as the step_size fallback
+    when ``step_size`` isn't explicitly given — mirroring how the real
+    exchange client behaves.
+    """
     return MarketInfo(
         symbol=symbol,
         base_currency_precision=base_prec,
-        quote_currency_precision=quote_prec,
+        target_currency_precision=target_prec,
         min_quantity=min_qty,
         min_amount=min_amt,
+        step_size=step_size,
         status=status,
         base_currency_short_name=base_short,
         target_currency_short_name=target_short,
@@ -248,7 +257,7 @@ class TestValidateInvestmentValid:
     async def test_quantity_rounded_down_to_step_size(self):
         # step_size = 0.01 (2 decimal places), price 100, invest 3.14 INR
         # raw = 0.0314, rounded = 0.03
-        info = _make_market_info(base_prec=2, min_qty=0.01, min_amt=0.0)
+        info = _make_market_info(target_prec=2, min_qty=0.01, min_amt=0.0)
         exchange = _make_exchange(info)
         validator = CoinValidator(exchange)
         result = await validator.validate_investment("BNBINR", 3.14, 100.0)
@@ -257,7 +266,7 @@ class TestValidateInvestmentValid:
 
     @pytest.mark.asyncio
     async def test_result_fields_populated_correctly(self):
-        info = _make_market_info(base_prec=5, min_qty=0.01, min_amt=0.0)
+        info = _make_market_info(target_prec=5, min_qty=0.01, min_amt=0.0)
         exchange = _make_exchange(info)
         validator = CoinValidator(exchange)
         result = await validator.validate_investment("BNBINR", 500.0, 30000.0)
@@ -286,7 +295,7 @@ class TestValidateInvestmentMinQuantity:
     @pytest.mark.asyncio
     async def test_min_investment_inr_reported(self):
         # step=0.01, min_qty=0.01, price=30000 → min_investment = 0.01 * 30000 = 300
-        info = _make_market_info(base_prec=2, min_qty=0.01, min_amt=0.0)
+        info = _make_market_info(target_prec=2, min_qty=0.01, min_amt=0.0)
         exchange = _make_exchange(info)
         validator = CoinValidator(exchange)
         result = await validator.validate_investment("BNBINR", 1.0, 30000.0)
@@ -296,7 +305,7 @@ class TestValidateInvestmentMinQuantity:
     @pytest.mark.asyncio
     async def test_zero_quantity_after_rounding_invalid(self):
         # step=1.0 (0 decimal places), price=10000, invest=0.5 → raw=0.00005, floor=0
-        info = _make_market_info(base_prec=0, min_qty=1.0, min_amt=0.0)
+        info = _make_market_info(target_prec=0, min_qty=1.0, min_amt=0.0)
         exchange = _make_exchange(info)
         validator = CoinValidator(exchange)
         result = await validator.validate_investment("BNBINR", 0.5, 10000.0)
@@ -306,7 +315,7 @@ class TestValidateInvestmentMinQuantity:
     @pytest.mark.asyncio
     async def test_min_amount_floor_enforced(self):
         # Even if qty is above min_qty, if INR < min_amt → fail
-        info = _make_market_info(base_prec=5, min_qty=0.00001, min_amt=500.0)
+        info = _make_market_info(target_prec=5, min_qty=0.00001, min_amt=500.0)
         exchange = _make_exchange(info)
         validator = CoinValidator(exchange)
         result = await validator.validate_investment("BNBINR", 100.0, 30000.0)
@@ -710,8 +719,8 @@ class TestMarketInfoIsActive:
         # Old code that creates MarketInfo without status uses the default "active"
         info = MarketInfo(
             symbol="BTCINR",
-            base_currency_precision=8,
-            quote_currency_precision=2,
+            base_currency_precision=2,
+            target_currency_precision=8,
             min_quantity=0.00001,
             min_amount=100.0,
         )
@@ -735,3 +744,124 @@ class TestExtendedTicker:
         et = _make_extended_ticker(change_24h=-2.5, high_24h=35000.0)
         assert et.change_24h == -2.5
         assert et.high_24h == 35000.0
+
+
+# ---------------------------------------------------------------------------
+# Regression: exchange metadata must never be confused across markets
+# ---------------------------------------------------------------------------
+#
+# These reproduce the reported bug: a high-priced asset whose PRICE precision
+# (base_currency_precision, e.g. INR quoted to 1 decimal) happened to look
+# like a plausible quantity step, while the real quantity step/min_quantity
+# came from the TARGET currency's own precision. Mixing the two produced a
+# step_size that had no mathematical relationship to min_quantity, so a
+# perfectly valid investment rounded to zero while the reported "minimum
+# investment" was calculated from a completely different constraint.
+
+
+class TestExchangeMetadataConsistency:
+    @pytest.mark.asyncio
+    async def test_high_priced_asset_matches_reported_bug_scenario(self):
+        # Reproduces: price ₹6,234,915.90, base_investment ₹500.
+        # Correct metadata for a high-priced coin: quantity step/min_quantity
+        # are tiny (target_currency_precision=5), independent of the pricing
+        # currency's own precision (base_currency_precision=1 for INR).
+        info = _make_market_info(
+            base_prec=1, target_prec=5, min_qty=0.00001, min_amt=0.0,
+        )
+        exchange = _make_exchange(info)
+        validator = CoinValidator(exchange)
+        result = await validator.validate_investment("WBTCINR", 500.0, 6_234_915.90)
+
+        # step_size must be derived from target precision (0.00001), not
+        # base/price precision (which would incorrectly give 0.1).
+        assert result.step_size == pytest.approx(0.00001)
+        assert result.step_size != pytest.approx(0.1)
+
+        # raw quantity ≈ 0.00008019, rounds down to 0.00008 at step 0.00001 —
+        # a valid, non-zero quantity, not "0 after rounding".
+        assert result.quantity > 0
+        assert result.valid is True
+
+        # The minimum investment must be mathematically consistent with the
+        # SAME step/min_quantity that produced the quantity above:
+        # min_quantity * price == 0.00001 * 6,234,915.90 ≈ 62.35
+        assert result.min_investment_inr == pytest.approx(62.349159, rel=1e-4)
+
+    @pytest.mark.asyncio
+    async def test_high_priced_asset_below_minimum_is_consistent(self):
+        # A genuinely too-small investment on the same high-priced asset must
+        # report a min_investment that, when actually invested, produces a
+        # valid (non-zero) quantity — proving the numbers agree with each other.
+        info = _make_market_info(
+            base_prec=1, target_prec=5, min_qty=0.00001, min_amt=0.0,
+        )
+        exchange = _make_exchange(info)
+        validator = CoinValidator(exchange)
+        result = await validator.validate_investment("WBTCINR", 10.0, 6_234_915.90)
+        assert result.valid is False
+
+        retry = await validator.validate_investment(
+            "WBTCINR", result.min_investment_inr, 6_234_915.90
+        )
+        assert retry.valid is True
+
+    @pytest.mark.asyncio
+    async def test_low_priced_asset_with_coarse_step(self):
+        # Low-priced, high-quantity-precision-tolerant coin (e.g. a meme coin
+        # priced at ₹0.05) with a coarse whole-number step size.
+        info = _make_market_info(
+            symbol="MEMEINR", base_prec=4, target_prec=0,
+            min_qty=1.0, min_amt=1.0,
+        )
+        exchange = _make_exchange(info)
+        validator = CoinValidator(exchange)
+        result = await validator.validate_investment("MEMEINR", 500.0, 0.05)
+        assert result.step_size == pytest.approx(1.0)
+        assert result.valid is True
+        assert result.quantity == pytest.approx(10000.0)
+
+    @pytest.mark.asyncio
+    async def test_step_size_taken_verbatim_when_not_a_power_of_ten(self):
+        # Some CoinDCX pairs report a non-power-of-ten 'step' (e.g. 0.5, 5,
+        # 25). The validator must use it exactly rather than re-deriving it
+        # from a precision field.
+        info = _make_market_info(
+            target_prec=8, min_qty=0.5, min_amt=0.0, step_size=0.5,
+        )
+        exchange = _make_exchange(info)
+        validator = CoinValidator(exchange)
+        result = await validator.validate_investment("XINR", 100.0, 60.0)
+        # raw = 1.6667, floored to nearest 0.5 -> 1.5
+        assert result.step_size == pytest.approx(0.5)
+        assert result.quantity == pytest.approx(1.5)
+
+    @pytest.mark.asyncio
+    async def test_different_quantity_precisions_all_validate_correctly(self):
+        cases = [
+            # (target_prec, min_qty, price, inr, expected_valid)
+            (0, 1.0, 50000.0, 60000.0, True),      # whole-unit coin, affordable
+            (2, 0.01, 200.0, 5.0, True),            # 2-decimal coin
+            (5, 0.00001, 6_234_915.90, 500.0, True),  # very high priced coin
+            (8, 0.00000001, 9_500_000.0, 100.0, True),  # BTC-like precision
+        ]
+        for target_prec, min_qty, price, inr, expected_valid in cases:
+            info = _make_market_info(
+                base_prec=2, target_prec=target_prec, min_qty=min_qty, min_amt=0.0,
+            )
+            exchange = _make_exchange(info)
+            validator = CoinValidator(exchange)
+            result = await validator.validate_investment("TESTINR", inr, price)
+            assert result.valid is expected_valid, (
+                f"target_prec={target_prec} price={price} inr={inr}: "
+                f"expected valid={expected_valid}, got {result.valid} "
+                f"(reason={result.reason})"
+            )
+            # min_investment must be consistent with min_quantity * price, but
+            # min_investment_inr intentionally rounds UP to the nearest paisa
+            # (so reinvesting exactly that amount is guaranteed to clear the
+            # minimum) — allow up to one paisa of rounding headroom rather
+            # than comparing to the unrounded exact product.
+            expected_min_inv = max(min_qty * price, 0.0)
+            assert result.min_investment_inr >= expected_min_inv - 1e-9
+            assert result.min_investment_inr - expected_min_inv < 0.01 + 1e-9

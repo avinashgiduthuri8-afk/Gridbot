@@ -25,6 +25,7 @@ from grid.dca_engine import (
     is_stop_loss_triggered,
     update_position_after_buy,
     update_position_after_sell,
+    validate_quantity,
 )
 from notifications.notifier import Notifier
 from risk.risk_manager import RiskManager
@@ -129,6 +130,9 @@ class DCAManager:
         initial_qty = calculate_quantity_for_inr(
             base_investment, entry_price,
             market_info.step_size, market_info.min_quantity,
+            min_notional=market_info.min_amount,
+            quantity_precision=market_info.target_currency_precision,
+            price_precision=market_info.base_currency_precision,
         )
         try:
             await self._order_manager.place_dca_order(
@@ -298,6 +302,9 @@ class DCAManager:
             qty = calculate_quantity_for_inr(
                 grid["dip_buy_amount"], current_price,
                 market_info.step_size, market_info.min_quantity,
+                min_notional=market_info.min_amount,
+                quantity_precision=market_info.target_currency_precision,
+                price_precision=market_info.base_currency_precision,
             )
         except (ExchangeError, ValueError) as exc:
             log.error("Cannot compute dip buy qty for %s: %s", grid_id, exc)
@@ -336,15 +343,42 @@ class DCAManager:
             desired_qty = calculate_quantity_for_inr(
                 grid["profit_sell_amount"], current_price,
                 market_info.step_size, market_info.min_quantity,
+                min_notional=market_info.min_amount,
+                quantity_precision=market_info.target_currency_precision,
+                price_precision=market_info.base_currency_precision,
             )
         except (ExchangeError, ValueError) as exc:
             log.error("Cannot compute profit sell qty for %s: %s", grid_id, exc)
             return
 
         sell_qty = clamp_sell_quantity(desired_qty, grid["total_quantity"], market_info.step_size)
-        if sell_qty <= 0:
-            log.warning("Profit sell qty is 0 for %s — skipping", grid_id)
+
+        # Clamping to the available balance can push a previously-valid
+        # quantity down to zero or back below min_quantity/min_notional
+        # (e.g. a "dust" remainder) — revalidate through the SAME rule
+        # engine as buys before this quantity is allowed to reach
+        # OrderManager. validate_quantity() treats qty<=0 as a min_quantity
+        # failure, so this is the ONE path for every clamp-shrinks-it-away
+        # outcome, with a proper user-facing notification every time.
+        check = validate_quantity(
+            sell_qty, current_price,
+            market_info.min_quantity,
+            step_size=market_info.step_size,
+            min_notional=market_info.min_amount,
+            quantity_precision=market_info.target_currency_precision,
+            price_precision=market_info.base_currency_precision,
+            unit_label=market_info.target_currency_short_name or "coins",
+        )
+        if not check.valid:
+            log.warning(
+                "Profit sell for %s rejected after clamping: %s", grid_id, check.reason,
+            )
+            await self._notifier.order_failed(
+                symbol=symbol, grid_id=grid_id, order_id="(pending)",
+                side="sell", reason=check.reason, mode=mode,
+            )
             return
+
         try:
             order = await self._order_manager.place_dca_order(
                 grid_id=grid_id,
@@ -386,8 +420,44 @@ class DCAManager:
             sell_qty = clamp_sell_quantity(total_qty, total_qty, market_info.step_size)
         except ExchangeError:
             sell_qty = total_qty
+            market_info = None
 
         pnl = (current_price - avg_entry) * sell_qty
+
+        # Unlike a profit sell (where the grid stays open and can simply
+        # retry later), a stop-loss is a FINAL exit. If the clamped
+        # remainder fails the shared rule check (e.g. it's an unsellable
+        # "dust" amount below min_quantity/min_notional), we cannot leave
+        # the grid open forever waiting for a sell that will never clear —
+        # write the position off as dust, notify, and close the grid.
+        if market_info is not None:
+            check = validate_quantity(
+                sell_qty, current_price,
+                market_info.min_quantity,
+                step_size=market_info.step_size,
+                min_notional=market_info.min_amount,
+                quantity_precision=market_info.target_currency_precision,
+                price_precision=market_info.base_currency_precision,
+                unit_label=market_info.target_currency_short_name or "coins",
+            )
+            if not check.valid:
+                log.warning(
+                    "Stop loss for %s: remaining %.8f cannot be sold (%s) — "
+                    "writing off as dust and closing grid.",
+                    grid_id, sell_qty, check.reason,
+                )
+                await self._repos.grids.update_state(
+                    grid_id,
+                    status=GridStatus.STOPPED.value,
+                    total_quantity=0.0,
+                    total_investment=0.0,
+                )
+                await self._notifier.error(
+                    f"Stop loss {symbol}",
+                    f"Grid closed, but {sell_qty:.8f} {market_info.target_currency_short_name or 'coins'} "
+                    f"could not be sold ({check.reason}) and was written off as dust.",
+                )
+                return
 
         try:
             await self._order_manager.place_dca_order(

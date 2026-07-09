@@ -7,7 +7,7 @@ ExchangeClient so the trading engine never depends on a specific wire format.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from config.constants import OrderSide
 
@@ -45,22 +45,44 @@ class ExtendedTicker:
 
 @dataclass
 class MarketInfo:
-    """Precision and minimum-size rules for a single trading pair."""
+    """Precision and minimum-size rules for a single trading pair.
+
+    Field names mirror CoinDCX's own terminology, which is easy to
+    misread because it is the reverse of the usual "base/quote" convention:
+
+    - ``base_currency`` is the *pricing* asset of the pair (e.g. INR, BTC, USDT).
+      ``base_currency_precision`` is how many decimals *prices* are quoted in.
+    - ``target_currency`` is the asset actually being bought/sold (the coin).
+      ``target_currency_precision`` is how many decimals *quantities* are
+      allowed to have, and is what the quantity step size must be derived
+      from — never from ``base_currency_precision``.
+
+    ``step_size`` and ``min_amount`` are two independent exchange constraints
+    on two different quantities (the target-currency quantity increment, and
+    the minimum base-currency notional value of an order, i.e. CoinDCX's
+    ``min_notional``). They must each come straight from the exchange's own
+    market-details response for this exact symbol — never assumed, never
+    derived from each other, and never copied from another market's rules.
+    """
 
     symbol: str
-    base_currency_precision: int
-    quote_currency_precision: int
-    min_quantity: float
-    min_amount: float
+    base_currency_precision: int      # decimals for PRICE formatting/rounding
+    target_currency_precision: int    # decimals for QUANTITY formatting; step_size fallback
+    min_quantity: float                # minimum tradeable quantity, in target currency units
+    min_amount: float                  # minimum order notional, in base currency units (CoinDCX "min_notional")
+    # Authoritative quantity increment reported by the exchange (CoinDCX "step").
+    # Only falls back to a value derived from target_currency_precision if the
+    # exchange genuinely did not supply one — it is NEVER derived from
+    # base_currency_precision, which governs price precision, not quantity.
+    step_size: float | None = None
     # Optional fields — populated when the exchange provides them
     status: str = "active"
     base_currency_short_name: str = ""
     target_currency_short_name: str = ""
-    # Derived in __post_init__ — not part of __init__
-    step_size: float = field(init=False)
 
     def __post_init__(self) -> None:
-        self.step_size = 10 ** (-self.base_currency_precision)
+        if self.step_size is None or self.step_size <= 0:
+            self.step_size = 10 ** (-self.target_currency_precision)
 
     @property
     def is_active(self) -> bool:

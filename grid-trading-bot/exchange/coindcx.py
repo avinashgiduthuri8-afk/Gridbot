@@ -175,28 +175,61 @@ class CoinDCXClient(ExchangeClient):
         return self._market_cache[symbol]
 
     async def _load_market_details(self) -> None:
-        """Fetch all market details and populate the in-memory cache."""
+        """Fetch all market details and populate the in-memory cache.
+
+        Field mapping is taken verbatim from CoinDCX's own
+        ``/exchange/v1/markets_details`` schema. CoinDCX's naming is the
+        reverse of the usual base/quote convention:
+
+        - ``base_currency_precision``   -> decimals of the PRICING currency (price precision)
+        - ``target_currency_precision`` -> decimals of the TRADED coin (quantity precision)
+        - ``step``                      -> the authoritative quantity increment (NOT derived)
+        - ``min_quantity``               -> minimum tradeable quantity of the traded coin
+        - ``min_notional``               -> minimum order value in the pricing currency
+
+        Every one of these must be read per-symbol from this response —
+        never assumed, and never reused from another market's entry.
+        """
         data: list[dict[str, Any]] = await self._get_public("/exchange/v1/markets_details")
         for item in data:
             sym = item.get("coindcx_name", "")
             if not sym:
                 continue
             base_prec = int(item.get("base_currency_precision", 8))
-            quote_prec = int(item.get("quote_currency_precision", 2))
+            target_prec = int(item.get("target_currency_precision", 8))
             min_qty = float(item.get("min_quantity", 0) or 0)
-            min_amt = float(item.get("min_amount", 0) or 0)
+            min_notional = float(item.get("min_notional", 0) or 0)
+            raw_step = item.get("step")
+            try:
+                step = float(raw_step) if raw_step is not None else None
+            except (TypeError, ValueError):
+                step = None
             status = str(item.get("status", "active")).lower()
             base_short = str(item.get("base_currency_short_name", ""))
             target_short = str(item.get("target_currency_short_name", ""))
+
+            if step is None:
+                log.warning(
+                    "market_details: %s has no 'step' field from CoinDCX — "
+                    "falling back to target_currency_precision=%d (10^-%d)",
+                    sym, target_prec, target_prec,
+                )
+
             self._market_cache[sym] = MarketInfo(
                 symbol=sym,
                 base_currency_precision=base_prec,
-                quote_currency_precision=quote_prec,
+                target_currency_precision=target_prec,
                 min_quantity=min_qty,
-                min_amount=min_amt,
+                min_amount=min_notional,
+                step_size=step,
                 status=status,
                 base_currency_short_name=base_short,
                 target_currency_short_name=target_short,
+            )
+            log.debug(
+                "market_details loaded symbol=%s base_prec=%d target_prec=%d "
+                "step=%s min_quantity=%s min_notional=%s status=%s",
+                sym, base_prec, target_prec, step, min_qty, min_notional, status,
             )
         log.info("Loaded market details for %d symbols", len(self._market_cache))
 

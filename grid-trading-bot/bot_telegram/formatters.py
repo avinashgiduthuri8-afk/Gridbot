@@ -175,7 +175,7 @@ def format_coin_info(
     """
     from config.constants import DEFAULT_BASE_INVESTMENT, DEFAULT_DIP_BUY_AMOUNT, DEFAULT_PROFIT_SELL_AMOUNT
 
-    base_coin = market_info.base_currency_short_name or symbol.replace("INR", "")
+    base_coin = market_info.target_currency_short_name or symbol.replace("INR", "")
     quote = market_info.target_currency_short_name or "INR"
 
     change_arrow = "📈" if extended_ticker.change_24h >= 0 else "📉"
@@ -215,8 +215,8 @@ def format_coin_info(
         f"  Min order value:  ₹{market_info.min_amount:,.2f}",
         f"  Min quantity:     {market_info.min_quantity:.8g} {base_coin}",
         f"  Quantity step:    {market_info.step_size:.8g} {base_coin}",
-        f"  Qty precision:    {market_info.base_currency_precision} decimals",
-        f"  Price precision:  {market_info.quote_currency_precision} decimals",
+        f"  Qty precision:    {market_info.target_currency_precision} decimals",
+        f"  Price precision:  {market_info.base_currency_precision} decimals",
         "",
         f"<b>Investment Validation</b>  (at ₹{extended_ticker.last_price:,.2f})",
         f"  Using default amounts — /coininfo uses bot defaults:",

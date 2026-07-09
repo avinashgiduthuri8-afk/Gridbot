@@ -9,8 +9,7 @@ Provides a single ``CoinValidator`` class that:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from decimal import Decimal, ROUND_DOWN
+from dataclasses import dataclass
 
 from exchange.base import ExchangeClient, MarketInfo
 from exchange.exceptions import (
@@ -20,6 +19,7 @@ from exchange.exceptions import (
     ExchangeRateLimitError,
     ExchangeTimeoutError,
 )
+from grid.dca_engine import validate_order
 from utils.logger import get_logger
 
 # Errors that indicate a transient exchange problem, NOT a bad symbol
@@ -40,9 +40,13 @@ class ValidationResult:
     reason: str = ""
     quantity: float = 0.0          # rounded, ready-to-trade quantity
     raw_quantity: float = 0.0      # before step-size rounding
-    min_quantity: float = 0.0      # exchange minimum
-    min_investment_inr: float = 0.0  # INR amount needed to meet min_quantity
+    notional: float = 0.0          # quantity * price — the actual order value
+    min_quantity: float = 0.0      # exchange minimum quantity
+    min_notional: float = 0.0      # exchange minimum order value
+    min_investment_inr: float = 0.0  # INR amount needed to satisfy every rule
     step_size: float = 0.0
+    quantity_precision: int | None = None
+    price_precision: int | None = None
     market_price: float = 0.0
     investment_inr: float = 0.0
 
@@ -111,11 +115,13 @@ class CoinValidator:
         inr_amount: float,
         price: float,
     ) -> ValidationResult:
-        """Validate that *inr_amount* at *price* produces a tradeable quantity.
+        """Validate that *inr_amount* at *price* produces a tradeable, exchange-legal order.
 
-        Uses the same Decimal arithmetic as ``calculate_quantity_for_inr`` in
-        ``grid/dca_engine.py`` so the result matches what the engine will
-        actually attempt to place.
+        Delegates all math and rule-checking to ``grid.dca_engine.validate_order``
+        — the SAME function the Trading Engine's ``calculate_quantity_for_inr``
+        uses. This is intentional: CoinValidator and the Trading Engine must
+        never independently decide whether an order is valid, or they can
+        drift apart (as previously happened with the minimum-notional check).
         """
         symbol = symbol.upper()
         if price <= 0:
@@ -136,72 +142,41 @@ class CoinValidator:
                 market_price=price,
             )
 
-        step = info.step_size
-        min_qty = info.min_quantity
-        min_amt = info.min_amount
-
-        d_inr = Decimal(str(inr_amount))
-        d_price = Decimal(str(price))
-        d_step = Decimal(str(step)) if step > 0 else Decimal(0)
-
-        raw_qty = d_inr / d_price
-        if d_step > 0:
-            n_steps = int(raw_qty / d_step)
-            quantity = n_steps * d_step
-        else:
-            quantity = raw_qty
-
-        qty_float = float(quantity)
-        raw_float = float(raw_qty)
-
-        # Minimum INR amount required to meet min_quantity at this price
-        min_investment = float(Decimal(str(min_qty)) * d_price) if min_qty > 0 else 0.0
-        # Also respect the exchange's own min_amount floor
-        min_investment = max(min_investment, min_amt)
-
-        log.debug(
-            "coin_validator qty_audit symbol=%s price=%.4f inr=%.4f "
-            "raw=%.8f rounded=%.8f step=%s min_qty=%.8f result=%s",
-            symbol, price, inr_amount, raw_float, qty_float,
-            step, min_qty, "OK" if qty_float >= min_qty else "FAIL",
+        order = validate_order(
+            inr_amount,
+            price,
+            info.step_size,
+            info.min_quantity,
+            min_notional=info.min_amount,
+            quantity_precision=info.target_currency_precision,
+            price_precision=info.base_currency_precision,
+            unit_label=info.target_currency_short_name or "coins",
         )
 
-        base_result = ValidationResult(
-            valid=False,
-            quantity=qty_float,
-            raw_quantity=raw_float,
-            min_quantity=min_qty,
-            min_investment_inr=min_investment,
-            step_size=step,
+        log.debug(
+            "coin_validator qty_audit symbol=%s market_price=%.8f investment_inr=%.4f "
+            "raw_quantity=%.10f step_size=%s rounded_quantity=%.10f notional=%.4f "
+            "min_quantity=%.10f min_notional=%.4f min_investment_inr=%.4f result=%s",
+            symbol, price, inr_amount, order.raw_quantity, order.step_size,
+            order.quantity, order.notional, order.min_quantity, order.min_notional,
+            order.min_investment_inr, "OK" if order.valid else "FAIL",
+        )
+
+        return ValidationResult(
+            valid=order.valid,
+            reason=order.reason,
+            quantity=order.quantity,
+            raw_quantity=order.raw_quantity,
+            notional=order.notional,
+            min_quantity=order.min_quantity,
+            min_notional=order.min_notional,
+            min_investment_inr=order.min_investment_inr,
+            step_size=order.step_size,
+            quantity_precision=order.quantity_precision,
+            price_precision=order.price_precision,
             market_price=price,
             investment_inr=inr_amount,
         )
-
-        if qty_float <= 0 and inr_amount > 0:
-            base_result.reason = (
-                f"₹{inr_amount:,.2f} at ₹{price:,.2f} yields 0 quantity after "
-                f"rounding to step size {step}. "
-                f"Minimum investment required: ₹{min_investment:,.2f}."
-            )
-            return base_result
-
-        if min_qty > 0 and qty_float < min_qty:
-            base_result.reason = (
-                f"₹{inr_amount:,.2f} at ₹{price:,.2f} yields {qty_float:.8f} {info.base_currency_short_name or 'coins'}, "
-                f"below the exchange minimum of {min_qty} {info.base_currency_short_name or 'coins'}. "
-                f"Minimum investment required: ₹{min_investment:,.2f}."
-            )
-            return base_result
-
-        if min_amt > 0 and inr_amount < min_amt:
-            base_result.reason = (
-                f"₹{inr_amount:,.2f} is below the exchange's minimum order value "
-                f"of ₹{min_amt:,.2f}."
-            )
-            return base_result
-
-        base_result.valid = True
-        return base_result
 
     async def validate_grid_params(
         self,

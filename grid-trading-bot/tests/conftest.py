@@ -85,10 +85,11 @@ class MockExchange(ExchangeClient):
     async def get_market_info(self, symbol: str) -> MarketInfo:
         return MarketInfo(
             symbol=symbol,
-            base_currency_precision=5,
-            quote_currency_precision=2,
+            base_currency_precision=2,
+            target_currency_precision=5,
             min_quantity=0.001,
             min_amount=10.0,
+            step_size=1e-5,
         )
 
     async def place_order(

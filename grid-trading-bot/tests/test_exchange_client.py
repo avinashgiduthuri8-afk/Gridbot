@@ -137,16 +137,31 @@ def test_sign_different_secrets_produce_different_sigs():
 # ---------------------------------------------------------------------------
 
 
-def test_market_info_step_size_precision_5():
-    info = MarketInfo(symbol="BTCINR", base_currency_precision=5,
-                      quote_currency_precision=2, min_quantity=0.001, min_amount=10.0)
+def test_market_info_uses_exchange_supplied_step_verbatim():
+    # The exchange's own 'step' must win, even when it doesn't match any
+    # power-of-ten derived from precision fields.
+    info = MarketInfo(symbol="BTCINR", base_currency_precision=2,
+                      target_currency_precision=8, min_quantity=0.00001,
+                      min_amount=10.0, step_size=0.00001)
     assert info.step_size == pytest.approx(1e-5)
 
 
-def test_market_info_step_size_precision_8():
-    info = MarketInfo(symbol="BTCINR", base_currency_precision=8,
-                      quote_currency_precision=2, min_quantity=0.00000001, min_amount=10.0)
-    assert info.step_size == pytest.approx(1e-8)
+def test_market_info_step_size_falls_back_to_target_precision_when_missing():
+    # No 'step' supplied by the exchange -> fall back to target (traded coin)
+    # precision, NEVER to base (pricing currency) precision.
+    info = MarketInfo(symbol="BTCINR", base_currency_precision=2,
+                      target_currency_precision=5, min_quantity=0.001, min_amount=10.0)
+    assert info.step_size == pytest.approx(1e-5)
+
+
+def test_market_info_step_size_never_derived_from_base_precision():
+    # Regression guard for the reported bug: a low base_currency_precision
+    # (pricing currency, e.g. INR) must NOT leak into the quantity step.
+    info = MarketInfo(symbol="WBTCINR", base_currency_precision=1,
+                      target_currency_precision=8, min_quantity=0.00001,
+                      min_amount=100.0, step_size=0.00001)
+    assert info.step_size == pytest.approx(0.00001)
+    assert info.step_size != pytest.approx(10 ** -1)
 
 
 # ---------------------------------------------------------------------------
