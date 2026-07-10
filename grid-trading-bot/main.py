@@ -199,6 +199,14 @@ async def async_main() -> None:
         await stop_event.wait()
 
         log.info("Shutting down...")
+        try:
+            await notifier.send(
+                "🔌 <b>Bot is shutting down.</b>\n"
+                "No new trades will be placed until it restarts.\n"
+                "Active grids are preserved — recovery will resume them on next start."
+            )
+        except Exception:  # noqa: BLE001
+            log.warning("Could not send shutdown notification")
         await application.updater.stop()
         await application.stop()
 

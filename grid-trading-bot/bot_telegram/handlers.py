@@ -373,6 +373,13 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
             await update.message.reply_text("Usage: /stopgrid <grid_id>")
             return
         grid_id = context.args[0]
+        grid = await app_context.repos.grids.get(grid_id)
+        if not grid:
+            await update.message.reply_text(
+                f"❌ Grid <code>{grid_id}</code> not found. Use /grids to see all grid IDs.",
+                parse_mode="HTML",
+            )
+            return
         try:
             await app_context.dca_manager.stop_grid(grid_id, reason="manual")
             await update.message.reply_text(f"🛑 Grid <code>{grid_id}</code> stopped.", parse_mode="HTML")
@@ -385,6 +392,13 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
             await update.message.reply_text("Usage: /pause <grid_id>")
             return
         grid_id = context.args[0]
+        grid = await app_context.repos.grids.get(grid_id)
+        if not grid:
+            await update.message.reply_text(
+                f"❌ Grid <code>{grid_id}</code> not found. Use /grids to see all grid IDs.",
+                parse_mode="HTML",
+            )
+            return
         try:
             await app_context.dca_manager.pause_grid(grid_id)
             await update.message.reply_text(f"⏸ Grid <code>{grid_id}</code> paused.", parse_mode="HTML")
@@ -397,6 +411,13 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
             await update.message.reply_text("Usage: /resume <grid_id>")
             return
         grid_id = context.args[0]
+        grid = await app_context.repos.grids.get(grid_id)
+        if not grid:
+            await update.message.reply_text(
+                f"❌ Grid <code>{grid_id}</code> not found. Use /grids to see all grid IDs.",
+                parse_mode="HTML",
+            )
+            return
         try:
             await app_context.dca_manager.resume_grid(grid_id)
             await update.message.reply_text(f"▶️ Grid <code>{grid_id}</code> resumed.", parse_mode="HTML")
@@ -520,7 +541,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
                 "Paused grids will not auto-resume — use /resume <grid_id> to restart each one.",
                 parse_mode="HTML",
             )
-            await app_context.notifier.send("✅ Emergency stop cleared via Telegram.")
+            await app_context.notifier.emergency_cleared(user_id=query.from_user.id)
         elif action == "cancel":
             await query.edit_message_text("Cancelled. Emergency stop remains active.")
 

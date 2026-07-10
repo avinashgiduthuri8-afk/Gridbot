@@ -146,8 +146,14 @@ class Database:
             try:
                 await self._conn.execute(stmt)
                 await self._conn.commit()
-            except Exception:
-                pass
+                log.debug("Migration applied: %.80s", stmt)
+            except Exception as exc:
+                # Most statements are intentionally idempotent (e.g. ADD COLUMN
+                # fails with "duplicate column" on an already-migrated schema).
+                # Log at DEBUG so we can distinguish first-run vs re-run without
+                # spamming production logs.  Any genuine failure will appear here
+                # instead of being silently swallowed.
+                log.debug("Migration stmt skipped (likely already applied): %s — %s", exc, stmt[:80])
         log.info("Database schema migration complete")
 
     async def close(self) -> None:

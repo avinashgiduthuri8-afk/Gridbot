@@ -23,7 +23,7 @@ import asyncio
 
 from config.constants import OrderStatus
 from exchange.base import ExchangeClient
-from exchange.exceptions import ExchangeError
+from exchange.exceptions import ExchangeError, ExchangeRateLimitError
 from notifications.notifier import Notifier
 from storage.repositories import Repositories
 from trading.dca_manager import DCAManager
@@ -33,6 +33,11 @@ log = get_logger("trading")
 
 
 class OrderMonitor:
+    # Backoff schedule when the exchange returns rate-limit errors.
+    # Each consecutive hit doubles the extra sleep, capped at _MAX_BACKOFF_SECONDS.
+    _BACKOFF_BASE_SECONDS: int = 30
+    _MAX_BACKOFF_SECONDS: int = 300  # 5 minutes
+
     def __init__(
         self,
         repos: Repositories,
@@ -53,6 +58,7 @@ class OrderMonitor:
         self._cycle_count = 0
         self._running = False
         self._task: asyncio.Task | None = None
+        self._consecutive_rate_limit_hits: int = 0
 
     def start(self) -> None:
         if self._task is None:
@@ -82,6 +88,22 @@ class OrderMonitor:
             self._cycle_count += 1
             try:
                 await self._poll_once()
+                # Successful cycle — reset any rate-limit backoff.
+                self._consecutive_rate_limit_hits = 0
+            except ExchangeRateLimitError:
+                self._consecutive_rate_limit_hits += 1
+                extra = min(
+                    self._BACKOFF_BASE_SECONDS * self._consecutive_rate_limit_hits,
+                    self._MAX_BACKOFF_SECONDS,
+                )
+                log.warning(
+                    "Rate limit hit in order monitor (consecutive=%d); "
+                    "sleeping extra %ds before next poll",
+                    self._consecutive_rate_limit_hits,
+                    extra,
+                )
+                await asyncio.sleep(extra)
+                continue  # skip the sync cycle this round too
             except Exception:  # noqa: BLE001
                 log.exception("Order monitor poll cycle failed")
 
@@ -118,6 +140,9 @@ class OrderMonitor:
                 refreshed = await self._order_manager.sync_order_status(
                     order["order_id"]
                 )
+            except ExchangeRateLimitError:
+                # Bubble up so _run_loop can apply backoff and skip remaining orders.
+                raise
             except ExchangeError as exc:
                 log.warning(
                     "sync_order_status failed for %s: %s", order["order_id"], exc
