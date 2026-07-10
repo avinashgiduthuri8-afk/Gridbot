@@ -231,6 +231,27 @@ class OrderMonitor:
         if not local_open:
             return 0, 0
 
+        # Resolve SUBMITTED orders that have no exchange_order_id — these are
+        # orders that were in-flight when a previous cycle crashed.  Recovery
+        # handles them at startup but the monitor may encounter them mid-session
+        # if a timeout error arrived after the HTTP request actually landed.
+        for order in local_open:
+            if order.get("status") == OrderStatus.SUBMITTED.value and not order.get("exchange_order_id"):
+                log.info(
+                    "exchange_sync: resolving stuck SUBMITTED order %s (%s %s)",
+                    order["order_id"], order["side"], order["symbol"],
+                )
+                try:
+                    await self._order_manager.resolve_uncertain_submitted(order["order_id"])
+                except ExchangeError as exc:
+                    log.warning(
+                        "exchange_sync: resolve_uncertain_submitted(%s) failed: %s",
+                        order["order_id"], exc,
+                    )
+
+        # Re-fetch so any newly-linked orders appear with their exchange_order_id
+        local_open = await self._repos.orders.list_open()
+
         # Collect symbols with active local orders
         symbols: set[str] = {
             o["symbol"] for o in local_open if o.get("exchange_order_id")

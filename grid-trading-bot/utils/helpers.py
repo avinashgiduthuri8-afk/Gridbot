@@ -53,6 +53,32 @@ def format_pct(value: Decimal) -> str:
     return f"{value:+.2f}%"
 
 
+def fmt_price(value: float, precision: int | None = None) -> str:
+    """Format a price in ₹ with the right number of decimal places.
+
+    If *precision* is provided (from MarketInfo.base_currency_precision) it is
+    used directly.  Otherwise a magnitude heuristic is applied so that cheap
+    coins (SHIB: ₹0.002) show meaningful decimals and expensive coins (BTC:
+    ₹6,500,000) don't show trailing zeros:
+
+      price >= 100    →  2 dp  (BTC, ETH)
+      price >= 1      →  4 dp  (XRP, MATIC, SOL)
+      price >= 0.01   →  6 dp  (small alts)
+      price < 0.01    →  8 dp  (SHIB, etc.)
+    """
+    if precision is not None:
+        dp = max(0, precision)
+    elif value >= 100:
+        dp = 2
+    elif value >= 1:
+        dp = 4
+    elif value >= 0.01:
+        dp = 6
+    else:
+        dp = 8
+    return f"₹{value:,.{dp}f}"
+
+
 def safe_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)

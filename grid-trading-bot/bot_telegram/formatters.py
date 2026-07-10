@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from utils.helpers import fmt_price
+
 
 def _status_emoji(status: str) -> str:
     return {"active": "🟢", "paused": "⏸", "stopped": "🛑", "completed": "🏁"}.get(status, "❓")
@@ -20,21 +22,21 @@ def format_grid_summary(grid: dict) -> str:
     invested = grid["total_investment"]
     unrealized_note = ""
     if avg > 0 and qty > 0:
-        unrealized_note = f"\nHolding: {qty:.6f} coins @ avg ₹{avg:,.2f} (invested ₹{invested:,.2f})"
+        unrealized_note = f"\nHolding: {qty:.8g} coins @ avg {fmt_price(avg)} (invested ₹{invested:,.2f})"
 
     next_buy = grid["next_buy_price"]
     next_sell = grid["next_sell_price"]
     targets = ""
     if status == "active" and grid["current_level"] > 0:
         targets = (
-            f"\nNext buy: ₹{next_buy:,.2f} | Next sell: ₹{next_sell:,.2f}"
+            f"\nNext buy: {fmt_price(next_buy)} | Next sell: {fmt_price(next_sell)}"
         )
 
     return (
         f"{emoji} <b>{grid['symbol']}</b> — <code>{grid['grid_id']}</code>\n"
         f"Mode: {_mode_label(mode)}\n"
         f"Status: {status.upper()} | Level: {grid['current_level']}/{grid['max_levels']}\n"
-        f"Entry: ₹{grid['entry_price']:,.2f} | Dip: {grid['dip_percentage']}% | Profit: {grid['profit_percentage']}%\n"
+        f"Entry: {fmt_price(grid['entry_price'])} | Dip: {grid['dip_percentage']}% | Profit: {grid['profit_percentage']}%\n"
         f"Stop loss: {grid['stop_loss_percentage']}%"
         f"{unrealized_note}"
         f"{targets}\n"
@@ -266,8 +268,8 @@ def format_positions(grids: list[dict]) -> str:
     lines = ["<b>Open Positions</b>\n"]
     for g in active:
         lines.append(
-            f"• <b>{g['symbol']}</b>: {g['total_quantity']:.6f} coins "
-            f"@ avg ₹{g['average_entry_price']:,.2f} "
+            f"• <b>{g['symbol']}</b>: {g['total_quantity']:.8g} coins "
+            f"@ avg {fmt_price(g['average_entry_price'])} "
             f"(invested ₹{g['total_investment']:,.2f}) "
             f"<code>{g['grid_id']}</code>"
         )
@@ -324,7 +326,7 @@ def format_trade_history(symbol: str, trades: list[dict]) -> str:
         pnl_part = f" | pnl ₹{t['pnl']:+,.2f}" if t["side"] == "sell" else ""
         ts = str(t["executed_at"])[:19].replace("T", " ")
         lines.append(
-            f"• [{ts}] {side} {t['quantity']:.6f} @ ₹{t['price']:,.2f}"
+            f"• [{ts}] {side} {t['quantity']:.8g} @ {fmt_price(t['price'])}"
             f" (₹{t['investment_inr']:,.2f}){pnl_part}"
         )
     return "\n".join(lines)

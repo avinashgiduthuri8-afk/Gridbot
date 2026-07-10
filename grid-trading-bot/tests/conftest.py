@@ -236,6 +236,9 @@ class MockNotifier:
     async def sync_error(self, context: str, message: str) -> None:
         self._record("sync_error", context, message)
 
+    async def orphan_orders_detected(self, orphans: list) -> None:
+        self._record("orphan_orders_detected", orphans)
+
     async def error(self, context: str, message: str) -> None:
         self._record("error", context, message)
 

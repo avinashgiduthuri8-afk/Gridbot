@@ -275,7 +275,11 @@ class RecoveryManager:
 
     async def _detect_orphan_orders(self, active_grids: list[dict]) -> int:
         """Fetch all exchange open orders for REAL (non-paper) active grid symbols.
-        Any order not present in the local DB is an orphan — logged for review.
+        Any order not present in the local DB is an orphan.
+
+        Orphans are notified via Telegram so the user can decide whether to
+        cancel them manually on CoinDCX.  We never auto-cancel because they
+        could be legitimate orders placed outside the bot.
 
         Paper grids route through the paper exchange, which reflects the real
         exchange's open orders; checking the real exchange for paper grid symbols
@@ -293,6 +297,7 @@ class RecoveryManager:
             return 0
 
         orphan_count = 0
+        orphan_details: list[dict] = []
 
         for symbol in symbols:
             try:
@@ -310,10 +315,20 @@ class RecoveryManager:
                 if local is None:
                     orphan_count += 1
                     log.warning(
-                        "Recovery: ORPHAN exchange order %s (%s %s qty=%.8f) "
-                        "has no local record — manual review required",
+                        "Recovery: ORPHAN exchange order %s (%s %s qty=%.8f @ ₹%.4f) "
+                        "has no local record — review and cancel on CoinDCX if needed",
                         ex_order.exchange_order_id, ex_order.side,
-                        symbol, float(ex_order.quantity or 0),
+                        symbol, float(ex_order.quantity or 0), float(ex_order.price or 0),
                     )
+                    orphan_details.append({
+                        "exchange_order_id": ex_order.exchange_order_id,
+                        "symbol": symbol,
+                        "side": ex_order.side if isinstance(ex_order.side, str) else ex_order.side.value,
+                        "quantity": float(ex_order.quantity or 0),
+                        "price": float(ex_order.price or 0),
+                    })
+
+        if orphan_details:
+            await self._notifier.orphan_orders_detected(orphan_details)
 
         return orphan_count

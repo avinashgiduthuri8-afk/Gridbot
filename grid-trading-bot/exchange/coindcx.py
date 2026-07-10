@@ -17,6 +17,9 @@ import json
 import time
 from typing import Any
 
+import asyncio as _asyncio
+import time as _time_mod
+
 import httpx
 from tenacity import (
     retry,
@@ -62,12 +65,34 @@ def _retry_policy():
 
 
 class CoinDCXClient(ExchangeClient):
-    def __init__(self, api_key: str, api_secret: str, base_url: str = "https://api.coindcx.com") -> None:
+    def __init__(
+        self,
+        api_key: str,
+        api_secret: str,
+        base_url: str = "https://api.coindcx.com",
+        ticker_cache_ttl: float = 1.5,
+    ) -> None:
+        """Create a CoinDCX client.
+
+        Args:
+            ticker_cache_ttl: How long (seconds) to cache the full ticker list
+                from /exchange/ticker.  Set to slightly less than the shortest
+                price-monitor interval you intend to use so consecutive calls
+                within the same poll cycle share one network round-trip without
+                reusing data from the *previous* cycle.  Default 1.5s is safe
+                down to the minimum supported 2s monitor interval.
+        """
         self._api_key = api_key
         self._api_secret = api_secret.encode()
         self._base_url = base_url.rstrip("/")
         self._client = httpx.AsyncClient(base_url=self._base_url, timeout=15.0)
         self._market_cache: dict[str, MarketInfo] = {}
+        self._ticker_cache_ttl: float = ticker_cache_ttl
+        self._ticker_cache: list[dict] = []
+        self._ticker_cache_ts: float = 0.0
+        # Single-flight lock: prevents concurrent cache misses from issuing
+        # multiple parallel /exchange/ticker requests.
+        self._ticker_refresh_lock: _asyncio.Lock = _asyncio.Lock()
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -130,8 +155,41 @@ class CoinDCXClient(ExchangeClient):
     # Public data
     # ------------------------------------------------------------------
 
+    async def _get_tickers_cached(self) -> list[dict]:
+        """Return the full raw ticker list, refreshing only when the TTL has expired.
+
+        CoinDCX's /exchange/ticker returns the complete market list (~100+ entries)
+        every call.  With multiple active grids and a 5-10s poll interval, hitting
+        this endpoint on every price tick wastes bandwidth and burns the rate limit.
+
+        TTL is set to 1.5s by default (safe down to the 2s minimum poll interval):
+        multiple symbols within the same poll cycle share one network round-trip
+        without reusing stale prices from the previous cycle.
+
+        A single-flight asyncio.Lock prevents concurrent cache misses from issuing
+        multiple parallel requests — only one refresh fires at a time, and all
+        waiters reuse its result.
+        """
+        now = _time_mod.monotonic()
+        if self._ticker_cache and (now - self._ticker_cache_ts) < self._ticker_cache_ttl:
+            log.debug("Ticker cache HIT (age=%.2fs)", now - self._ticker_cache_ts)
+            return self._ticker_cache
+
+        async with self._ticker_refresh_lock:
+            # Re-check inside the lock: another coroutine may have refreshed
+            # while we were waiting to acquire it.
+            now = _time_mod.monotonic()
+            if self._ticker_cache and (now - self._ticker_cache_ts) < self._ticker_cache_ttl:
+                log.debug("Ticker cache HIT (post-lock, age=%.2fs)", now - self._ticker_cache_ts)
+                return self._ticker_cache
+            data: list[dict] = await self._get_public("/exchange/ticker")
+            self._ticker_cache = data
+            self._ticker_cache_ts = _time_mod.monotonic()
+            log.debug("Ticker cache refreshed — %d entries", len(data))
+            return data
+
     async def get_ticker(self, symbol: str) -> Ticker:
-        data = await self._get_public("/exchange/ticker")
+        data = await self._get_tickers_cached()
         for entry in data:
             if entry.get("market") == symbol:
                 return Ticker(symbol=symbol, last_price=float(entry["last_price"]))
@@ -142,12 +200,13 @@ class CoinDCXClient(ExchangeClient):
 
         CoinDCX /exchange/ticker always returns the full market list; we filter
         client-side so callers never pay more than one HTTP round-trip regardless
-        of how many symbols are monitored.
+        of how many symbols are monitored.  The shared TTL cache means this and
+        get_ticker() share the same underlying data for the same poll cycle.
         """
         if not symbols:
             return {}
         try:
-            data = await self._get_public("/exchange/ticker")
+            data = await self._get_tickers_cached()
         except Exception as exc:
             log.warning("Batch ticker fetch failed: %s", exc)
             return {}
@@ -236,10 +295,10 @@ class CoinDCXClient(ExchangeClient):
     async def get_extended_ticker(self, symbol: str) -> "ExtendedTicker":
         """Fetch full 24-hour market data for *symbol* in a single API call.
 
-        CoinDCX /exchange/ticker returns the full list; we scan client-side
-        so this costs exactly one HTTP round-trip regardless of the symbol.
+        Uses the TTL cache so a /coininfo call immediately after a price check
+        doesn't hit the exchange twice.
         """
-        data = await self._get_public("/exchange/ticker")
+        data = await self._get_tickers_cached()
         for entry in data:
             if entry.get("market") != symbol:
                 continue

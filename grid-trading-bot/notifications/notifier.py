@@ -15,6 +15,7 @@ from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
 from config.constants import TELEGRAM_MAX_MESSAGE_LENGTH
+from utils.helpers import fmt_price
 from utils.logger import get_logger
 
 log = get_logger("telegram")
@@ -79,9 +80,9 @@ class Notifier:
         await self.send(
             f"🟢 <b>DCA Grid Started</b>\n"
             f"Coin: <b>{symbol}</b> | Grid: <code>{grid_id}</code>\n"
-            f"Entry: ₹{entry_price:,.2f} | Investment: ₹{base_investment:,.2f}\n"
+            f"Entry: {fmt_price(entry_price)} | Investment: ₹{base_investment:,.2f}\n"
             f"Dip: {dip_pct}% | Profit: {profit_pct}% | Max levels: {max_levels}\n"
-            f"First profit target: ₹{next_sell_price:,.2f}"
+            f"First profit target: {fmt_price(next_sell_price)}"
         )
 
     async def grid_paused(self, symbol: str, grid_id: str) -> None:
@@ -132,9 +133,9 @@ class Notifier:
         await self.send(
             f"💸 <b>Dip Buy #{level} Executed</b>\n"
             f"Coin: <b>{symbol}</b> | Grid: <code>{grid_id}</code>\n"
-            f"Price: ₹{buy_price:,.2f} | Qty: {quantity:.6f} | Cost: ₹{investment_inr:,.2f}\n"
-            f"Avg entry: ₹{avg_entry_price:,.2f}\n"
-            f"Next buy: ₹{next_buy_price:,.2f} | Sell target: ₹{next_sell_price:,.2f}"
+            f"Price: {fmt_price(buy_price)} | Qty: {quantity:.8g} | Cost: ₹{investment_inr:,.2f}\n"
+            f"Avg entry: {fmt_price(avg_entry_price)}\n"
+            f"Next buy: {fmt_price(next_buy_price)} | Sell target: {fmt_price(next_sell_price)}"
         )
 
     async def profit_sell_executed(
@@ -153,10 +154,10 @@ class Notifier:
         await self.send(
             f"{emoji} <b>Profit Sell Executed</b>\n"
             f"Coin: <b>{symbol}</b> | Grid: <code>{grid_id}</code>\n"
-            f"Qty sold: {quantity:.6f} @ ₹{sell_price:,.2f}\n"
-            f"Avg entry: ₹{avg_entry_price:,.2f} | PnL: ₹{pnl:+,.2f}\n"
+            f"Qty sold: {quantity:.8g} @ {fmt_price(sell_price)}\n"
+            f"Avg entry: {fmt_price(avg_entry_price)} | PnL: ₹{pnl:+,.2f}\n"
             f"Total realized: ₹{total_realized:,.2f} | Cycles: {cycles}\n"
-            f"Next sell target: ₹{next_sell_price:,.2f}"
+            f"Next sell target: {fmt_price(next_sell_price)}"
         )
 
     async def stop_loss_triggered(
@@ -171,8 +172,8 @@ class Notifier:
         await self.send(
             f"🚨 <b>Stop Loss Triggered</b>\n"
             f"Coin: <b>{symbol}</b> | Grid: <code>{grid_id}</code>\n"
-            f"Sell price: ₹{sell_price:,.2f} | Avg entry: ₹{avg_entry_price:,.2f}\n"
-            f"Qty sold: {quantity:.6f} | Loss: ₹{pnl:,.2f}\n"
+            f"Sell price: {fmt_price(sell_price)} | Avg entry: {fmt_price(avg_entry_price)}\n"
+            f"Qty sold: {quantity:.8g} | Loss: ₹{pnl:,.2f}\n"
             f"Grid has been stopped automatically."
         )
 
@@ -187,16 +188,16 @@ class Notifier:
         await self.send(
             f"📊 <b>Position Updated</b>\n"
             f"Coin: <b>{symbol}</b> | Grid: <code>{grid_id}</code>\n"
-            f"Avg entry: ₹{avg_entry:,.2f}\n"
-            f"Total qty: {total_qty:.6f} | Total invested: ₹{total_investment:,.2f}"
+            f"Avg entry: {fmt_price(avg_entry)}\n"
+            f"Total qty: {total_qty:.8g} | Total invested: ₹{total_investment:,.2f}"
         )
 
     async def price_alert_triggered(self, symbol: str, price: float, target: float, direction: str) -> None:
         arrow = "📈" if direction == "above" else "📉"
         await self.send(
             f"{arrow} <b>Price Alert</b>\n"
-            f"<b>{symbol}</b> has crossed ₹{target:,.2f}\n"
-            f"Current price: ₹{price:,.2f}"
+            f"<b>{symbol}</b> has crossed {fmt_price(target)}\n"
+            f"Current price: {fmt_price(price)}"
         )
 
     # ------------------------------------------------------------------
@@ -349,6 +350,32 @@ class Notifier:
             f"🗑 <b>Grid Deleted</b>\n"
             f"Coin: <b>{symbol}</b> | Grid: <code>{grid_id}</code>"
         )
+
+    async def orphan_orders_detected(self, orphans: list[dict]) -> None:
+        """Notify the user about exchange orders that have no local DB record.
+
+        These may be orders placed outside the bot, or orders whose DB write
+        failed before the bot crashed.  The user should review them on CoinDCX
+        and cancel any that are unexpected.
+        """
+        lines = [
+            f"⚠️ <b>{len(orphans)} Orphan Order(s) Detected on Exchange</b>\n",
+            "These open orders have no matching local record.\n"
+            "If you did not place them manually, cancel them on CoinDCX to avoid "
+            "unintended fills.\n",
+        ]
+        for o in orphans:
+            side = str(o.get("side", "?")).upper()
+            symbol = o.get("symbol", "?")
+            qty = float(o.get("quantity", 0))
+            price = float(o.get("price", 0))
+            ex_id = o.get("exchange_order_id", "?")
+            price_str = f" @ ₹{price:,.4f}" if price > 0 else ""
+            lines.append(
+                f"• {side} {symbol} qty {qty:.8g}{price_str}\n"
+                f"  Exchange ID: <code>{ex_id}</code>"
+            )
+        await self.send("\n".join(lines))
 
     async def error(self, context: str, message: str) -> None:
         await self.send(f"❌ <b>Error — {context}</b>\n<code>{message[:300]}</code>")

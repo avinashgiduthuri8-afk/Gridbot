@@ -1,0 +1,3 @@
+- [Batch fixes overview](batch-fixes-overview.md) — batches 1–4 applied; 335 tests pass; roadmap in replit.md
+- [Ticker cache design](ticker-cache.md) — TTL=1.5s, single-flight asyncio.Lock, constructor param; safe down to 2s poll
+- [Uncertain order resolution](uncertain-order-resolution.md) — exchange query failure must defer (leave SUBMITTED), not mark FAILED

@@ -238,6 +238,99 @@ class OrderManager:
         )
         return True
 
+    async def resolve_uncertain_submitted(self, order_id: str) -> bool:
+        """Try to link a SUBMITTED-without-exchange_id order to an open exchange order.
+
+        Called by the order monitor's sync cycle to un-stick orders that were
+        in-flight when a previous poll cycle crashed or timed out (and thus were
+        not resolved by the at-startup recovery run).
+
+        Crucially, this method distinguishes between:
+        - Exchange query failure  → leave SUBMITTED, retry next cycle (return False)
+        - Query succeeded, no match found → mark FAILED (the order didn't land)
+        - Query succeeded, one match → link and return True
+
+        This prevents incorrectly failing orders during transient exchange outages.
+
+        Returns True if successfully linked, False otherwise (SUBMITTED left intact
+        on exchange errors, FAILED set on definitive no-match).
+        """
+        order = await self._repos.orders.get(order_id)
+        if not order or order.get("exchange_order_id"):
+            return False  # nothing to do
+        if order["status"] != OrderStatus.SUBMITTED.value:
+            return False
+
+        symbol = order["symbol"]
+        side = order["side"]
+        quantity = float(order["quantity"])
+        price = float(order["price"])
+
+        log.info(
+            "resolve_uncertain_submitted: attempting to link stuck order %s "
+            "(%s %s qty=%.8f)",
+            order_id, side, symbol, quantity,
+        )
+
+        # Query the exchange — if this fails we defer (leave SUBMITTED) rather
+        # than incorrectly marking the order FAILED during a transient outage.
+        try:
+            open_orders = await self._exchange.get_open_orders(symbol=symbol)
+        except ExchangeError as exc:
+            log.warning(
+                "resolve_uncertain_submitted: exchange query failed for %s, "
+                "leaving as SUBMITTED for retry: %s",
+                order_id, exc,
+            )
+            return False
+
+        def _qty_ok(ex_qty: float) -> bool:
+            return quantity > 0 and ex_qty > 0 and abs(ex_qty - quantity) / quantity <= 0.02
+
+        def _price_ok(ex_price: float) -> bool:
+            if price <= 0 or ex_price <= 0:
+                return True
+            return abs(ex_price - price) / price <= 0.05
+
+        candidates = [
+            o for o in open_orders
+            if (o.side if isinstance(o.side, str) else o.side.value) == side
+            and _qty_ok(float(o.quantity or 0))
+            and _price_ok(float(o.price or 0))
+        ]
+
+        if len(candidates) == 1:
+            match = candidates[0]
+            await self._repos.orders.update_status(
+                order_id,
+                match.status,
+                exchange_order_id=match.exchange_order_id,
+                filled_quantity=match.filled_quantity,
+                filled_price=match.filled_price,
+            )
+            log.info(
+                "resolve_uncertain_submitted: linked %s → exchange %s (status=%s)",
+                order_id, match.exchange_order_id, match.status,
+            )
+            return True
+
+        # Zero or ambiguous matches: mark FAILED so the grid can re-enter.
+        # Note: an order that filled quickly may not appear in open_orders.
+        # That case is handled by the regular order-monitor poll cycle, which
+        # uses sync_order_status once exchange_order_id is known.
+        if len(candidates) > 1:
+            log.warning(
+                "resolve_uncertain_submitted: %d ambiguous matches for %s — marked FAILED",
+                len(candidates), order_id,
+            )
+        else:
+            log.warning(
+                "resolve_uncertain_submitted: no exchange match for %s — marked FAILED",
+                order_id,
+            )
+        await self._repos.orders.update_status(order_id, OrderStatus.FAILED.value)
+        return False
+
     async def cancel_order(self, order_id: str) -> bool:
         order = await self._repos.orders.get(order_id)
         if not order:
