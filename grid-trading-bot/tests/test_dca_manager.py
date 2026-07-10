@@ -165,14 +165,15 @@ async def test_start_grid_rejected_by_risk_blocks_exchange_call(
 
 
 @pytest.mark.anyio
-async def test_start_grid_exchange_failure_marks_grid_stopped(
+async def test_start_grid_exchange_failure_rolls_back_grid(
     dca_manager, repos, mock_exchange
 ):
+    """On order failure the grid row must be deleted entirely — not left as STOPPED."""
     mock_exchange.fail_on_place = True
     with pytest.raises(ValueError, match="Exchange rejected"):
         await dca_manager.start_grid(_default_params())
-    grids = await repos.grids.list_by_status([GridStatus.STOPPED.value])
-    assert len(grids) == 1
+    all_grids = await repos.grids.list_all()
+    assert len(all_grids) == 0, "Grid row should be deleted after a failed start"
 
 
 # ---------------------------------------------------------------------------

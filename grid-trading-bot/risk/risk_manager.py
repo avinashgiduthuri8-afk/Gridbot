@@ -67,7 +67,20 @@ class RiskManager:
                 f"limit of ₹{self._settings.max_capital_per_coin:,.2f}.",
             )
 
-        total_committed = sum(float(g["total_investment"] or 0) for g in active_grids)
+        def _max_committed(g: dict) -> float:
+            """Already-spent INR plus the full remaining DCA ladder the grid could still buy.
+
+            current_level increments on every buy fill (including the initial entry),
+            and dip buys fire while current_level < max_levels, so remaining dips =
+            max(0, max_levels - current_level).
+            """
+            spent = float(g["total_investment"] or 0)
+            future = float(g["dip_buy_amount"] or 0) * max(
+                0, int(g["max_levels"]) - int(g["current_level"])
+            )
+            return spent + future
+
+        total_committed = sum(_max_committed(g) for g in active_grids)
         if total_committed + planned_investment > self._settings.max_total_capital:
             return RiskCheckResult(
                 False,

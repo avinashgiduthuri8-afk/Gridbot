@@ -9,6 +9,7 @@ Responsibilities:
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 
 from config.constants import GridStatus, OrderStatus
@@ -52,6 +53,15 @@ class DCAManager:
         self._order_manager = order_manager
         self._notifier = notifier
         self._risk = risk
+        # Per-grid locks prevent concurrent Telegram commands and monitor callbacks
+        # from racing on the same grid's state.
+        self._grid_locks: dict[str, asyncio.Lock] = {}
+
+    def _grid_lock(self, grid_id: str) -> asyncio.Lock:
+        """Return (creating if necessary) the asyncio.Lock for a single grid."""
+        if grid_id not in self._grid_locks:
+            self._grid_locks[grid_id] = asyncio.Lock()
+        return self._grid_locks[grid_id]
 
     # ------------------------------------------------------------------
     # Grid lifecycle
@@ -83,8 +93,11 @@ class DCAManager:
         else:
             wallet = await self._exchange.get_balance("INR")
             wallet_balance = wallet.balance
+        # Pass the full DCA ladder commitment so the risk manager can correctly
+        # assess whether total capital limits would be breached across all grids.
+        full_ladder_commitment = base_investment + dip_buy_amount * (max_levels - 1)
         risk_result = await self._risk.check_can_start_grid(
-            symbol, base_investment, wallet_balance
+            symbol, full_ladder_commitment, wallet_balance
         )
         if not risk_result.allowed:
             raise ValueError(risk_result.reason)
@@ -143,9 +156,20 @@ class DCAManager:
                 quantity=initial_qty,
                 order_type="market_order",
             )
-        except ExchangeError as exc:
-            await self._repos.grids.update_status(grid_id, GridStatus.STOPPED.value)
-            raise ValueError(f"Exchange rejected initial buy: {exc}") from exc
+        except Exception as exc:
+            # Roll back the grid row entirely — a zombie ACTIVE/STOPPED record with
+            # no orders is more confusing than a clean failure the user can retry.
+            try:
+                # Orders that reference this grid must be removed first to satisfy
+                # the FK constraint, then the grid row itself can be deleted.
+                await self._repos.orders.delete_for_grid(grid_id)
+                await self._repos.grids.delete(grid_id)
+                log.warning("Rolled back grid %s after order failure: %s", grid_id, exc)
+            except Exception:
+                log.exception("Could not roll back grid %s; it may need manual cleanup", grid_id)
+            if isinstance(exc, ExchangeError):
+                raise ValueError(f"Exchange rejected initial buy: {exc}") from exc
+            raise
 
         approx_next_sell = calculate_profit_target(entry_price, profit_pct)
         await self._notifier.grid_started(
@@ -161,42 +185,45 @@ class DCAManager:
         return grid_id
 
     async def pause_grid(self, grid_id: str) -> None:
-        grid = await self._repos.grids.get(grid_id)
-        if not grid or grid["status"] != GridStatus.ACTIVE.value:
-            raise ValueError(f"Grid {grid_id} is not active.")
-        await self._repos.grids.update_status(grid_id, GridStatus.PAUSED.value)
-        log.info("Grid %s paused", grid_id)
-        await self._notifier.grid_paused(grid["symbol"], grid_id)
+        async with self._grid_lock(grid_id):
+            grid = await self._repos.grids.get(grid_id)
+            if not grid or grid["status"] != GridStatus.ACTIVE.value:
+                raise ValueError(f"Grid {grid_id} is not active.")
+            await self._repos.grids.update_status(grid_id, GridStatus.PAUSED.value)
+            log.info("Grid %s paused", grid_id)
+            await self._notifier.grid_paused(grid["symbol"], grid_id)
 
     async def resume_grid(self, grid_id: str) -> None:
-        grid = await self._repos.grids.get(grid_id)
-        if not grid or grid["status"] != GridStatus.PAUSED.value:
-            raise ValueError(f"Grid {grid_id} is not paused.")
-        await self._repos.grids.update_status(grid_id, GridStatus.ACTIVE.value)
-        log.info("Grid %s resumed", grid_id)
-        await self._notifier.grid_resumed(grid["symbol"], grid_id)
+        async with self._grid_lock(grid_id):
+            grid = await self._repos.grids.get(grid_id)
+            if not grid or grid["status"] != GridStatus.PAUSED.value:
+                raise ValueError(f"Grid {grid_id} is not paused.")
+            await self._repos.grids.update_status(grid_id, GridStatus.ACTIVE.value)
+            log.info("Grid %s resumed", grid_id)
+            await self._notifier.grid_resumed(grid["symbol"], grid_id)
 
     async def stop_grid(self, grid_id: str, reason: str = "manual") -> None:
         """Stop a grid, selling all remaining holdings if stop-loss is the reason."""
-        grid = await self._repos.grids.get(grid_id)
-        if not grid:
-            raise ValueError(f"Grid {grid_id} not found.")
-        if grid["status"] in (GridStatus.STOPPED.value, GridStatus.COMPLETED.value):
-            return
+        async with self._grid_lock(grid_id):
+            grid = await self._repos.grids.get(grid_id)
+            if not grid:
+                raise ValueError(f"Grid {grid_id} not found.")
+            if grid["status"] in (GridStatus.STOPPED.value, GridStatus.COMPLETED.value):
+                return
 
-        pending = await self._repos.orders.list_pending_for_grid(grid_id)
-        for order in pending:
-            try:
-                await self._order_manager.cancel_order(order["order_id"])
-            except ExchangeError as exc:
-                log.warning(
-                    "Could not cancel %s order %s during stop: %s",
-                    order["side"], order["order_id"], exc,
-                )
+            pending = await self._repos.orders.list_pending_for_grid(grid_id)
+            for order in pending:
+                try:
+                    await self._order_manager.cancel_order(order["order_id"])
+                except ExchangeError as exc:
+                    log.warning(
+                        "Could not cancel %s order %s during stop: %s",
+                        order["side"], order["order_id"], exc,
+                    )
 
-        await self._repos.grids.update_status(grid_id, GridStatus.STOPPED.value)
-        log.info("Grid %s stopped (reason: %s)", grid_id, reason)
-        await self._notifier.grid_stopped(grid["symbol"], grid_id, reason)
+            await self._repos.grids.update_status(grid_id, GridStatus.STOPPED.value)
+            log.info("Grid %s stopped (reason: %s)", grid_id, reason)
+            await self._notifier.grid_stopped(grid["symbol"], grid_id, reason)
 
     # ------------------------------------------------------------------
     # Price trigger checks (called by the price-monitor loop in main.py)
@@ -208,6 +235,11 @@ class DCAManager:
         Safe to call on every price tick — guard conditions prevent duplicate
         orders and respect paused / stopped state.
         """
+        async with self._grid_lock(grid_id):
+            await self._check_grid_triggers_locked(grid_id, current_price)
+
+    async def _check_grid_triggers_locked(self, grid_id: str, current_price: float) -> None:
+        """Inner implementation — must be called while holding _grid_lock(grid_id)."""
         grid = await self._repos.grids.get(grid_id)
         if not grid or grid["status"] != GridStatus.ACTIVE.value:
             return
@@ -264,30 +296,32 @@ class DCAManager:
             log.warning("handle_order_filled called for unknown order %s", order_id)
             return
 
-        # Idempotency: if a trade record already exists for this order, the fill
-        # was already processed (e.g. by a previous recovery run or poll cycle).
-        existing_trade = await self._repos.trade_history.get_by_order_id(order_id)
-        if existing_trade:
-            log.info(
-                "handle_order_filled: fill for order %s already recorded "
-                "(trade %s) — skipping to prevent double-apply",
-                order_id, existing_trade["trade_id"],
-            )
-            return
-
         grid_id: str = order["grid_id"]
-        grid = await self._repos.grids.get(grid_id)
-        if not grid:
-            log.warning("Order %s belongs to missing grid %s", order_id, grid_id)
-            return
 
-        actual_price = fill_price if fill_price > 0 else order["price"]
-        actual_qty = fill_qty if fill_qty > 0 else order["quantity"]
+        async with self._grid_lock(grid_id):
+            # Idempotency check must live inside the lock so that two concurrent
+            # callers cannot both pass the guard and then each apply the fill.
+            existing_trade = await self._repos.trade_history.get_by_order_id(order_id)
+            if existing_trade:
+                log.info(
+                    "handle_order_filled: fill for order %s already recorded "
+                    "(trade %s) — skipping to prevent double-apply",
+                    order_id, existing_trade["trade_id"],
+                )
+                return
 
-        if order["side"] == "buy":
-            await self._on_buy_filled(grid, order_id, actual_price, actual_qty)
-        else:
-            await self._on_sell_filled(grid, order_id, actual_price, actual_qty)
+            grid = await self._repos.grids.get(grid_id)
+            if not grid:
+                log.warning("Order %s belongs to missing grid %s", order_id, grid_id)
+                return
+
+            actual_price = fill_price if fill_price > 0 else order["price"]
+            actual_qty = fill_qty if fill_qty > 0 else order["quantity"]
+
+            if order["side"] == "buy":
+                await self._on_buy_filled(grid, order_id, actual_price, actual_qty)
+            else:
+                await self._on_sell_filled(grid, order_id, actual_price, actual_qty)
 
     # ------------------------------------------------------------------
     # Private: order execution helpers

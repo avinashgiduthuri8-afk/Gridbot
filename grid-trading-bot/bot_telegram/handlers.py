@@ -446,7 +446,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
             await update.message.reply_text(f"Could not fetch price for {symbol}: {exc}")
             return
         try:
-            direction = app_context.alert_manager.add(symbol, target, current, now_iso())
+            direction = await app_context.alert_manager.add_and_persist(symbol, target, current, now_iso())
         except ValueError as exc:
             await update.message.reply_text(str(exc))
             return
@@ -480,7 +480,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
             await update.message.reply_text("Usage: /delalert <symbol>")
             return
         symbol = context.args[0].upper()
-        removed = app_context.alert_manager.delete(symbol)
+        removed = await app_context.alert_manager.delete_and_persist(symbol)
         if removed:
             await update.message.reply_text(f"Removed {removed} alert(s) for {symbol}.")
         else:

@@ -50,7 +50,7 @@ async def run_alert_check_loop(
             for symbol in symbols:
                 try:
                     ticker = await exchange.get_ticker(symbol)
-                    fired = alert_manager.check_and_fire(symbol, ticker.last_price)
+                    fired = await alert_manager.fire_and_persist(symbol, ticker.last_price)
                     for alert in fired:
                         direction_word = "reached" if alert.direction == "above" else "dropped to"
                         await notifier.send(
@@ -115,7 +115,10 @@ async def async_main() -> None:
         paper=paper_order_manager,
         repos=repos,
     )
-    alert_manager = AlertManager()
+    alert_manager = AlertManager(repo=repos.price_alerts)
+    # Restore any alerts that were set before the last restart.
+    saved_alerts = await repos.price_alerts.list_all()
+    alert_manager.load(saved_alerts)
 
     dca_manager = DCAManager(
         exchange=exchange,

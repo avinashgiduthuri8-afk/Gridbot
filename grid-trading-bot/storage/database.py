@@ -107,6 +107,16 @@ CREATE TABLE IF NOT EXISTS monitor_settings (
     value      TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS price_alerts (
+    alert_id    TEXT PRIMARY KEY,
+    symbol      TEXT NOT NULL,
+    target_price REAL NOT NULL,
+    direction   TEXT NOT NULL,
+    set_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_price_alerts_symbol ON price_alerts(symbol);
 """
 
 _MIGRATION_STMTS = [

@@ -99,6 +99,30 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
                 "Symbol must end with INR (e.g. BTCINR). Please try again:"
             )
             return CUSTOM_COIN
+
+        # Validate the symbol exists on the exchange before accepting it so the
+        # user learns immediately — not after filling in 8 more steps.
+        from trading.coin_validator import CoinValidator
+        checking_msg = await update.message.reply_text(
+            f"⏳ Checking <b>{symbol}</b> on exchange…", parse_mode="HTML"
+        )
+        try:
+            validator = CoinValidator(app_context.exchange)
+            valid, reason = await validator.validate_pair(symbol)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Symbol validation error for %s: %s", symbol, exc)
+            valid, reason = False, f"Could not reach the exchange: {exc}"
+
+        if not valid:
+            await checking_msg.edit_text(
+                f"❌ {reason}\n\nPlease enter a valid trading symbol (e.g. BTCINR):"
+            )
+            return CUSTOM_COIN
+
+        try:
+            await checking_msg.delete()
+        except Exception:  # noqa: BLE001
+            pass  # message may have already been deleted or Telegram timed out
         context.user_data["symbol"] = symbol
         await update.message.reply_text(
             f"✅ Coin: <b>{symbol}</b>\n\n"
