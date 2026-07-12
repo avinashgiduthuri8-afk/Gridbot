@@ -19,6 +19,15 @@ def coin_selection_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def grid_mode_choice_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("1️⃣ Default Grid", callback_data="grid_setup_mode:default")],
+            [InlineKeyboardButton("2️⃣ Custom Grid", callback_data="grid_setup_mode:custom")],
+        ]
+    )
+
+
 def confirm_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [

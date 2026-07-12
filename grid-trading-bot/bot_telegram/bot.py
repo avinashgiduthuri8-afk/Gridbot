@@ -43,6 +43,22 @@ class BotAppContext:
 async def _on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.error("Unhandled Telegram error: %s", context.error, exc_info=context.error)
 
+    # Previously this only logged — the user would see no response at all if
+    # a command handler raised (e.g. a DB write failing inside /emergencystop
+    # or /clearemergency). Best-effort reply so the user knows to retry
+    # rather than assuming the command silently succeeded or was ignored.
+    if isinstance(update, Update) and update.effective_chat is not None:
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="⚠️ Something went wrong processing that command. "
+                     "Please try again; check /logs if it keeps failing.",
+            )
+        except Exception:  # noqa: BLE001
+            # If we can't even send the error notice, there's nothing more
+            # we can safely do here — it's already logged above.
+            log.error("Failed to notify user about the above error", exc_info=True)
+
 
 def build_application(app_context: BotAppContext) -> Application:
     application = (

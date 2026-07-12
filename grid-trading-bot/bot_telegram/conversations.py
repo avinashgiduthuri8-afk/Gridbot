@@ -1,9 +1,15 @@
 """ConversationHandler implementing the guided /newgrid DCA setup flow.
 
-Steps:
-  SYMBOL → ENTRY_PRICE → BASE_INVESTMENT → DIP_BUY_AMOUNT → DIP_PERCENTAGE
+Entry menu: Default Grid (coin only, saved defaults) vs Custom Grid (full
+guided setup, unchanged from before).
+
+Custom Grid steps:
+  SELECT_COIN → ENTRY_PRICE → BASE_INVESTMENT → DIP_BUY_AMOUNT → DIP_PERCENTAGE
   → PROFIT_SELL_AMOUNT → PROFIT_PERCENTAGE → MAX_LEVELS → STOP_LOSS
   → SELECT_MODE → CONFIRM
+
+Default Grid steps:
+  DEFAULT_COIN → [SELECT_MODE if no saved mode yet] → CONFIRM
 """
 
 from __future__ import annotations
@@ -17,20 +23,28 @@ from telegram.ext import (
     filters,
 )
 
-from bot_telegram.keyboards import coin_selection_keyboard, confirm_keyboard, trading_mode_keyboard
+from bot_telegram.keyboards import (
+    coin_selection_keyboard,
+    confirm_keyboard,
+    grid_mode_choice_keyboard,
+    trading_mode_keyboard,
+)
 from config.constants import (
     DEFAULT_DIP_PERCENTAGE,
     DEFAULT_MAX_LEVELS,
     DEFAULT_PROFIT_PERCENTAGE,
     DEFAULT_STOP_LOSS_PERCENTAGE,
+    QUICK_GRID_DEFAULTS_SEED,
 )
 from utils.logger import get_logger
 
 log = get_logger("telegram")
 
 (
+    GRID_SETUP_MODE,
     SELECT_COIN,
     CUSTOM_COIN,
+    DEFAULT_COIN,
     ENTRY_PRICE,
     BASE_INVESTMENT,
     DIP_BUY_AMOUNT,
@@ -41,7 +55,7 @@ log = get_logger("telegram")
     STOP_LOSS,
     SELECT_MODE,
     CONFIRM,
-) = range(12)
+) = range(14)
 
 
 def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHandler:  # noqa: F821
@@ -63,15 +77,124 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             return ConversationHandler.END
         context.user_data.clear()
         await update.message.reply_text(
-            "🚀 <b>New DCA Grid Setup</b>\n\n"
-            "Step 1 of 9: Select a coin to trade, or type a custom symbol.",
+            "🆕 <b>Create New Grid</b>\n\n"
+            "1️⃣ <b>Default Grid</b> — just pick a coin, everything else uses "
+            "your saved defaults (see /defaults)\n"
+            "2️⃣ <b>Custom Grid</b> — full guided setup, choose every parameter",
             parse_mode="HTML",
-            reply_markup=coin_selection_keyboard(),
+            reply_markup=grid_mode_choice_keyboard(),
         )
-        return SELECT_COIN
+        return GRID_SETUP_MODE
+
+    async def grid_setup_mode_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        query = update.callback_query
+        await query.answer()
+        _, choice = query.data.split(":", 1)
+
+        if choice == "custom":
+            context.user_data["_source"] = "custom"
+            await query.edit_message_text(
+                "🚀 <b>New DCA Grid Setup (Custom)</b>\n\n"
+                "Step 1 of 9: Select a coin to trade, or type a custom symbol.",
+                parse_mode="HTML",
+                reply_markup=coin_selection_keyboard(),
+            )
+            return SELECT_COIN
+
+        # Default Grid path
+        context.user_data["_source"] = "default"
+        await query.edit_message_text(
+            "⚡ <b>Default Grid</b>\n\n"
+            "Type the coin symbol to trade (e.g. BTCINR, SHIBINR). "
+            "Every other setting will use your saved defaults — see /defaults "
+            "to view or change them.",
+            parse_mode="HTML",
+        )
+        return DEFAULT_COIN
 
     # ------------------------------------------------------------------
-    # Step 1 — coin
+    # Shared symbol validation (used by both Custom and Default coin entry)
+    # ------------------------------------------------------------------
+
+    async def _validate_symbol(symbol: str) -> tuple[bool, str]:
+        """Validate a typed symbol exists and is tradeable on the exchange.
+        Shared by custom_coin_entered and default_coin_entered so the two
+        entry points can never drift out of sync on validation rules.
+        """
+        from trading.coin_validator import CoinValidator
+        try:
+            validator = CoinValidator(app_context.exchange)
+            return await validator.validate_pair(symbol)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Symbol validation error for %s: %s", symbol, exc)
+            return False, f"Could not reach the exchange: {exc}"
+
+    # ------------------------------------------------------------------
+    # Default Grid — coin entry, then straight to mode/confirm
+    # ------------------------------------------------------------------
+
+    async def default_coin_entered(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        from config.constants import SYMBOL_PATTERN
+        symbol = update.message.text.strip().upper()
+        if not SYMBOL_PATTERN.match(symbol):
+            await update.message.reply_text(
+                "Symbol must be letters/numbers only and end with INR "
+                "(e.g. BTCINR). Please try again:"
+            )
+            return DEFAULT_COIN
+
+        checking_msg = await update.message.reply_text(
+            f"⏳ Checking <b>{symbol}</b> on exchange…", parse_mode="HTML"
+        )
+        valid, reason = await _validate_symbol(symbol)
+        if not valid:
+            await checking_msg.edit_text(
+                f"❌ {reason}\n\nPlease enter a valid trading symbol (e.g. BTCINR):"
+            )
+            return DEFAULT_COIN
+        try:
+            await checking_msg.delete()
+        except Exception:  # noqa: BLE001
+            pass
+
+        defaults = await app_context.repos.grid_defaults.get_or_seed(QUICK_GRID_DEFAULTS_SEED)
+        context.user_data.update({
+            "symbol": symbol,
+            "entry_price": 0.0,  # market price
+            "base_investment": defaults["base_investment"],
+            "dip_buy_amount": defaults["dip_buy_amount"],
+            "dip_percentage": defaults["dip_percentage"],
+            "profit_sell_amount": defaults["profit_sell_amount"],
+            "profit_percentage": defaults["profit_percentage"],
+            "max_levels": defaults["max_levels"],
+            "stop_loss_percentage": defaults["stop_loss_percentage"],
+        })
+
+        saved_mode = defaults.get("last_mode")
+        if saved_mode in ("paper", "real"):
+            context.user_data["mode"] = saved_mode
+            await update.message.reply_text(
+                f"✅ Coin: <b>{symbol}</b>\n"
+                f"Using saved mode: {'🟢 Paper Trade' if saved_mode == 'paper' else '🔴 Real Trade'} "
+                f"(change anytime via /defaults)",
+                parse_mode="HTML",
+            )
+            summary = _build_summary(context.user_data)
+            await update.message.reply_text(summary, parse_mode="HTML", reply_markup=confirm_keyboard())
+            return CONFIRM
+
+        await update.message.reply_text(
+            f"✅ Coin: <b>{symbol}</b>\n\n"
+            "Choose your <b>trading mode</b>.\n\n"
+            "🟢 <b>Paper Trade</b> — simulate orders with no real money.\n"
+            "🔴 <b>Real Trade</b> — execute actual orders on CoinDCX.",
+            parse_mode="HTML",
+            reply_markup=trading_mode_keyboard(),
+        )
+        return SELECT_MODE
+
+    # ------------------------------------------------------------------
+    # Step 1 — coin (Custom Grid path)
     # ------------------------------------------------------------------
 
     async def coin_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -93,10 +216,12 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
         return ENTRY_PRICE
 
     async def custom_coin_entered(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        from config.constants import SYMBOL_PATTERN
         symbol = update.message.text.strip().upper()
-        if not symbol.endswith("INR"):
+        if not SYMBOL_PATTERN.match(symbol):
             await update.message.reply_text(
-                "Symbol must end with INR (e.g. BTCINR). Please try again:"
+                "Symbol must be letters/numbers only and end with INR "
+                "(e.g. BTCINR). Please try again:"
             )
             return CUSTOM_COIN
 
@@ -324,18 +449,15 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
     # Step 10 — mode selection
     # ------------------------------------------------------------------
 
-    async def mode_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        query = update.callback_query
-        await query.answer()
-        _, mode = query.data.split(":", 1)
-        context.user_data["mode"] = mode
-        mode_label = "🟢 Paper Trade" if mode == "paper" else "🔴 Real Trade"
-
-        d = context.user_data
+    def _build_summary(d: dict) -> str:
+        """Shared by mode_selected (Custom Grid) and default_coin_entered
+        (Default Grid, when a saved mode already exists) so both paths
+        produce an identical confirmation screen from the same user_data
+        shape."""
+        mode_label = "🟢 Paper Trade" if d.get("mode") == "paper" else "🔴 Real Trade"
         price_label = f"₹{d['entry_price']:,.2f}" if d["entry_price"] > 0 else "market price"
         total_possible = d["base_investment"] + d["dip_buy_amount"] * (d["max_levels"] - 1)
-
-        summary = (
+        return (
             "<b>📋 DCA Grid Summary</b>\n\n"
             f"Coin: <b>{d['symbol']}</b>\n"
             f"Entry price: {price_label}\n"
@@ -354,6 +476,13 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             f"Max possible capital: ₹{total_possible:,.2f}\n\n"
             "Confirm to start this DCA grid?"
         )
+
+    async def mode_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        query = update.callback_query
+        await query.answer()
+        _, mode = query.data.split(":", 1)
+        context.user_data["mode"] = mode
+        summary = _build_summary(context.user_data)
         await query.edit_message_text(summary, parse_mode="HTML", reply_markup=confirm_keyboard())
         return CONFIRM
 
@@ -424,10 +553,17 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
                 return ConversationHandler.END
 
             if not result.valid:
+                is_default = d.get("_source") == "default"
+                hint = (
+                    "\n\nUse /defaults to update your saved default amounts, "
+                    "then try /newgrid again."
+                    if is_default else
+                    "\n\nUse /newgrid to start over with a larger amount."
+                )
                 await query.edit_message_text(
                     f"❌ <b>{label}</b> (₹{amount:,.2f}) does not meet exchange rules:\n\n"
-                    f"{result.reason}\n\n"
-                    "Use /newgrid to start over with a larger amount.",
+                    f"{result.reason}"
+                    f"{hint}",
                     parse_mode="HTML",
                 )
                 return ConversationHandler.END
@@ -438,6 +574,14 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
         await query.edit_message_text("⏳ Starting grid… please wait.")
         try:
             grid_id = await app_context.dca_manager.start_grid(context.user_data)
+            if d.get("_source") == "default":
+                # Remember this mode choice so the next Default Grid skips
+                # mode selection entirely, per the spec ("last selected or
+                # ask if not set").
+                try:
+                    await app_context.repos.grid_defaults.update(last_mode=d.get("mode"))
+                except Exception:  # noqa: BLE001
+                    log.warning("Could not persist last_mode after grid start", exc_info=True)
             await query.edit_message_text(
                 f"✅ <b>DCA Grid Started!</b>\n\n"
                 f"Coin: <b>{symbol}</b>\n"
@@ -467,6 +611,8 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
     return ConversationHandler(
         entry_points=[MessageHandler(filters.Regex(r"^/newgrid$"), start)],
         states={
+            GRID_SETUP_MODE: [CallbackQueryHandler(grid_setup_mode_chosen, pattern="^grid_setup_mode:")],
+            DEFAULT_COIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, default_coin_entered)],
             SELECT_COIN: [CallbackQueryHandler(coin_chosen, pattern="^pick_coin:")],
             CUSTOM_COIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, custom_coin_entered)],
             ENTRY_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, entry_price_entered)],

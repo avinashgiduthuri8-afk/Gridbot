@@ -7,9 +7,11 @@ WAL mode is enabled for crash-safe writes and concurrent readers.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Awaitable, Callable
 
 import aiosqlite
 
+from utils.helpers import now_iso
 from utils.logger import get_logger
 
 log = get_logger("database")
@@ -29,6 +31,9 @@ CREATE TABLE IF NOT EXISTS dca_grids (
     profit_percentage    REAL NOT NULL,
     max_levels           INTEGER NOT NULL,
     stop_loss_percentage REAL NOT NULL,
+    trailing_enabled     INTEGER NOT NULL DEFAULT 0,
+    trailing_percentage  REAL,
+    trailing_peak_price  REAL,
 
     current_level        INTEGER NOT NULL DEFAULT 0,
     total_quantity       REAL    NOT NULL DEFAULT 0,
@@ -117,11 +122,65 @@ CREATE TABLE IF NOT EXISTS price_alerts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_price_alerts_symbol ON price_alerts(symbol);
+
+CREATE TABLE IF NOT EXISTS grid_defaults (
+    id                    INTEGER PRIMARY KEY CHECK (id = 1),
+    base_investment       REAL NOT NULL,
+    dip_buy_amount        REAL NOT NULL,
+    dip_percentage        REAL NOT NULL,
+    profit_sell_amount    REAL NOT NULL,
+    profit_percentage     REAL NOT NULL,
+    max_levels            INTEGER NOT NULL,
+    stop_loss_percentage  REAL NOT NULL,
+    last_mode             TEXT,
+    updated_at            TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version     INTEGER PRIMARY KEY,
+    description TEXT NOT NULL,
+    applied_at  TEXT NOT NULL
+);
 """
 
-_MIGRATION_STMTS = [
-    "ALTER TABLE dca_grids ADD COLUMN mode TEXT NOT NULL DEFAULT 'real'",
-    # monitor_settings is created by SCHEMA above; no ALTER needed
+async def _column_exists(conn: aiosqlite.Connection, table: str, column: str) -> bool:
+    cur = await conn.execute(f"PRAGMA table_info({table})")
+    rows = await cur.fetchall()
+    return any(row["name"] == column for row in rows)
+
+
+async def _migration_001_add_mode_column(conn: aiosqlite.Connection) -> None:
+    """dca_grids.mode was added after the initial schema; guard on the
+    column's actual presence (not a try/except around the ALTER) so a
+    genuine failure — disk full, corrupt DB, permissions — is never
+    confused with "already applied" and silently swallowed.
+    """
+    if not await _column_exists(conn, "dca_grids", "mode"):
+        await conn.execute(
+            "ALTER TABLE dca_grids ADD COLUMN mode TEXT NOT NULL DEFAULT 'real'"
+        )
+
+
+# Each entry: (version, human-readable description, async fn(conn) -> None).
+# Versions are permanent once shipped — never renumber or edit an existing
+# entry's behavior after release; add a new numbered migration instead.
+async def _migration_002_add_trailing_columns(conn: aiosqlite.Connection) -> None:
+    """trailing_enabled/trailing_percentage/trailing_peak_price were added
+    after the initial schema for the Trailing Take Profit feature — same
+    idempotency-guard pattern as migration 001."""
+    if not await _column_exists(conn, "dca_grids", "trailing_enabled"):
+        await conn.execute(
+            "ALTER TABLE dca_grids ADD COLUMN trailing_enabled INTEGER NOT NULL DEFAULT 0"
+        )
+    if not await _column_exists(conn, "dca_grids", "trailing_percentage"):
+        await conn.execute("ALTER TABLE dca_grids ADD COLUMN trailing_percentage REAL")
+    if not await _column_exists(conn, "dca_grids", "trailing_peak_price"):
+        await conn.execute("ALTER TABLE dca_grids ADD COLUMN trailing_peak_price REAL")
+
+
+_MIGRATIONS: list[tuple[int, str, Callable[[aiosqlite.Connection], Awaitable[None]]]] = [
+    (1, "Add mode column to dca_grids", _migration_001_add_mode_column),
+    (2, "Add trailing take-profit columns to dca_grids", _migration_002_add_trailing_columns),
 ]
 
 
@@ -140,31 +199,62 @@ class Database:
 
     async def connect(self) -> None:
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+        resolved_path = Path(self._db_path).resolve()
+        existed_before = resolved_path.exists()
+
         self._conn = await aiosqlite.connect(self._db_path)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA journal_mode=WAL;")
         await self._conn.execute("PRAGMA foreign_keys=ON;")
         await self._conn.execute("PRAGMA synchronous=NORMAL;")
         await self._conn.commit()
-        log.info("Connected to SQLite database at %s", self._db_path)
+        log.info(
+            "Connected to SQLite database at %s (resolved: %s, pre-existing file: %s)",
+            self._db_path, resolved_path, existed_before,
+        )
+        if not existed_before:
+            log.warning(
+                "No pre-existing database file was found at %s — a brand-new, "
+                "empty database was just created. If you expected existing "
+                "grids/history to be here, this likely means DATABASE_PATH "
+                "or the mounted volume does not point at the same location "
+                "as the previous deployment.",
+                resolved_path,
+            )
 
     async def migrate(self) -> None:
         assert self._conn is not None
         await self._conn.executescript(SCHEMA)
         await self._conn.commit()
-        for stmt in _MIGRATION_STMTS:
+
+        cur = await self._conn.execute("SELECT version FROM schema_migrations")
+        applied = {row["version"] for row in await cur.fetchall()}
+
+        for version, description, fn in _MIGRATIONS:
+            if version in applied:
+                continue
             try:
-                await self._conn.execute(stmt)
-                await self._conn.commit()
-                log.debug("Migration applied: %.80s", stmt)
-            except Exception as exc:
-                # Most statements are intentionally idempotent (e.g. ADD COLUMN
-                # fails with "duplicate column" on an already-migrated schema).
-                # Log at DEBUG so we can distinguish first-run vs re-run without
-                # spamming production logs.  Any genuine failure will appear here
-                # instead of being silently swallowed.
-                log.debug("Migration stmt skipped (likely already applied): %s — %s", exc, stmt[:80])
-        log.info("Database schema migration complete")
+                await fn(self._conn)
+            except Exception:
+                # A genuine migration failure must stop startup, not be logged
+                # and silently skipped — running against a half-migrated
+                # schema is worse than refusing to start.
+                log.exception(
+                    "Migration %d (%s) FAILED — aborting startup. "
+                    "Database may need manual inspection.",
+                    version, description,
+                )
+                raise
+            await self._conn.execute(
+                "INSERT INTO schema_migrations (version, description, applied_at) "
+                "VALUES (?, ?, ?)",
+                (version, description, now_iso()),
+            )
+            await self._conn.commit()
+            log.info("Migration %d applied: %s", version, description)
+
+        current_version = max(applied | {v for v, _, _ in _MIGRATIONS}, default=0)
+        log.info("Database schema migration complete (schema_version=%d)", current_version)
 
     async def close(self) -> None:
         if self._conn is not None:

@@ -40,16 +40,18 @@ class DCAGridRepository:
                    (grid_id, symbol, status, mode,
                     entry_price, base_investment, dip_buy_amount, dip_percentage,
                     profit_sell_amount, profit_percentage, max_levels, stop_loss_percentage,
+                    trailing_enabled, trailing_percentage, trailing_peak_price,
                     current_level, total_quantity, total_investment, average_entry_price,
                     last_buy_price, next_buy_price, next_sell_price,
                     realized_profit, completed_cycles,
                     created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 grid.grid_id, grid.symbol, grid.status, grid.mode,
                 grid.entry_price, grid.base_investment, grid.dip_buy_amount,
                 grid.dip_percentage, grid.profit_sell_amount, grid.profit_percentage,
                 grid.max_levels, grid.stop_loss_percentage,
+                int(grid.trailing_enabled), grid.trailing_percentage, grid.trailing_peak_price,
                 grid.current_level, grid.total_quantity, grid.total_investment,
                 grid.average_entry_price, grid.last_buy_price,
                 grid.next_buy_price, grid.next_sell_price,
@@ -101,7 +103,16 @@ class DCAGridRepository:
         await self._db.connection.commit()
 
     async def update_state(self, grid_id: str, **fields: Any) -> None:
-        """Update one or more dynamic state columns atomically."""
+        """Update one or more dynamic state columns atomically.
+
+        SECURITY NOTE: column names come from **fields' keys and are
+        interpolated directly into the SQL string (values are still safely
+        parameterized via `?`). This is only safe because every call site in
+        this codebase passes literal keyword arguments written in source
+        code (e.g. `update_state(grid_id, current_level=5)`) — never a dict
+        built from Telegram input, an API response, or any other external
+        source. Do not call this with `**untrusted_dict`.
+        """
         if not fields:
             return
         fields["updated_at"] = now_iso()
@@ -391,9 +402,32 @@ class MonitorSettingsRepository:
     """Persists key-value pairs for the price monitor (interval, etc.)."""
 
     _KEY_INTERVAL = "price_monitor_interval"
+    _KEY_EMERGENCY_STOP = "emergency_stop"
 
     def __init__(self, db: Database) -> None:
         self._db = db
+
+    async def get_emergency_stop(self) -> bool:
+        """Return the persisted emergency-stop state (defaults to False)."""
+        cur = await self._db.connection.execute(
+            "SELECT value FROM monitor_settings WHERE key = ?",
+            (self._KEY_EMERGENCY_STOP,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return False
+        return row["value"] == "1"
+
+    async def set_emergency_stop(self, active: bool) -> None:
+        """Persist the emergency-stop flag so it survives a restart."""
+        await self._db.connection.execute(
+            """INSERT INTO monitor_settings (key, value, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                              updated_at = excluded.updated_at""",
+            (self._KEY_EMERGENCY_STOP, "1" if active else "0", now_iso()),
+        )
+        await self._db.connection.commit()
 
     async def get_interval(self) -> int | None:
         """Return the stored interval, or None if never explicitly set.
@@ -489,6 +523,94 @@ class PriceAlertRepository:
 
 
 # ---------------------------------------------------------------------------
+# Grid defaults (Quick Default Grid Mode)
+# ---------------------------------------------------------------------------
+
+
+class GridDefaultsRepository:
+    """Persists the single-row set of default grid parameters used by the
+    Quick Default Grid workflow. Table is constrained to exactly one row
+    (id=1) via a CHECK constraint — this is a settings singleton, not a
+    per-user or per-coin table.
+    """
+
+    _ROW_ID = 1
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def get(self) -> dict | None:
+        cur = await self._db.connection.execute(
+            "SELECT * FROM grid_defaults WHERE id = ?", (self._ROW_ID,)
+        )
+        row = await cur.fetchone()
+        return _row(row) if row else None
+
+    async def get_or_seed(self, seed: dict) -> dict:
+        """Return the saved defaults, creating them from *seed* on first use.
+
+        This is what makes the feature "persist after restart" from the very
+        first run — the seed values are only ever written once; every
+        subsequent call returns whatever the user has since edited via
+        /defaults.
+        """
+        existing = await self.get()
+        if existing is not None:
+            return existing
+        await self._db.connection.execute(
+            """INSERT INTO grid_defaults
+               (id, base_investment, dip_buy_amount, dip_percentage,
+                profit_sell_amount, profit_percentage, max_levels,
+                stop_loss_percentage, last_mode, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                self._ROW_ID,
+                seed["base_investment"], seed["dip_buy_amount"], seed["dip_percentage"],
+                seed["profit_sell_amount"], seed["profit_percentage"], seed["max_levels"],
+                seed["stop_loss_percentage"], seed.get("last_mode"), now_iso(),
+            ),
+        )
+        await self._db.connection.commit()
+        return await self.get()
+
+    async def update(self, **fields) -> dict:
+        """Update one or more default fields (upserting the row if it
+        somehow doesn't exist yet — defensive, since get_or_seed should
+        normally have created it first)."""
+        allowed = {
+            "base_investment", "dip_buy_amount", "dip_percentage",
+            "profit_sell_amount", "profit_percentage", "max_levels",
+            "stop_loss_percentage", "last_mode",
+        }
+        unknown = set(fields) - allowed
+        if unknown:
+            raise ValueError(f"Unknown grid default field(s): {sorted(unknown)}")
+
+        existing = await self.get()
+        if existing is None:
+            # Nothing to merge with — caller must supply a complete seed
+            # via get_or_seed() first in normal operation. Defensive only.
+            raise RuntimeError("grid_defaults row does not exist — call get_or_seed() first")
+
+        merged = {**existing, **fields}
+        await self._db.connection.execute(
+            """UPDATE grid_defaults SET
+                   base_investment = ?, dip_buy_amount = ?, dip_percentage = ?,
+                   profit_sell_amount = ?, profit_percentage = ?, max_levels = ?,
+                   stop_loss_percentage = ?, last_mode = ?, updated_at = ?
+               WHERE id = ?""",
+            (
+                merged["base_investment"], merged["dip_buy_amount"], merged["dip_percentage"],
+                merged["profit_sell_amount"], merged["profit_percentage"], merged["max_levels"],
+                merged["stop_loss_percentage"], merged.get("last_mode"), now_iso(),
+                self._ROW_ID,
+            ),
+        )
+        await self._db.connection.commit()
+        return await self.get()
+
+
+# ---------------------------------------------------------------------------
 # Container
 # ---------------------------------------------------------------------------
 
@@ -505,3 +627,4 @@ class Repositories:
         self.logs = LogRepository(db)
         self.monitor_settings = MonitorSettingsRepository(db)
         self.price_alerts = PriceAlertRepository(db)
+        self.grid_defaults = GridDefaultsRepository(db)

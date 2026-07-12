@@ -37,6 +37,9 @@ class DCAGridRecord:
     created_at: str
     updated_at: str
     mode: str = "real"
+    trailing_enabled: bool = False
+    trailing_percentage: float | None = None
+    trailing_peak_price: float | None = None
 
 
 @dataclass

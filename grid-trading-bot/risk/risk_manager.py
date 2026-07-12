@@ -33,12 +33,29 @@ class RiskManager:
     def emergency_stopped(self) -> bool:
         return self._emergency_stop
 
-    def trigger_emergency_stop(self) -> None:
+    async def load_emergency_stop(self) -> None:
+        """Restore the emergency-stop flag from SQLite on startup.
+
+        Without this, a restart while emergency stop was active would
+        silently re-enable trading with no notification — a real gap: the
+        in-memory flag reset to False on every process start regardless of
+        the last-known state.
+        """
+        self._emergency_stop = await self._repos.monitor_settings.get_emergency_stop()
+        if self._emergency_stop:
+            log.critical(
+                "Emergency stop was ACTIVE at last shutdown — restored on startup. "
+                "Trading remains blocked until /clearemergency is used."
+            )
+
+    async def trigger_emergency_stop(self) -> None:
         self._emergency_stop = True
+        await self._repos.monitor_settings.set_emergency_stop(True)
         log.critical("EMERGENCY STOP triggered. All new trading actions are blocked.")
 
-    def clear_emergency_stop(self) -> None:
+    async def clear_emergency_stop(self) -> None:
         self._emergency_stop = False
+        await self._repos.monitor_settings.set_emergency_stop(False)
         log.warning("Emergency stop cleared. Trading actions re-enabled.")
 
     async def check_can_start_grid(

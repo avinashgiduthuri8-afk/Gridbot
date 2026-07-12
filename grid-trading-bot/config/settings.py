@@ -49,6 +49,13 @@ def _get_int(key: str, default: int) -> int:
         raise ConfigError(f"Environment variable {key} must be an integer, got {value!r}") from exc
 
 
+def _get_bool(key: str, default: bool) -> bool:
+    value = os.getenv(key)
+    if value is None or not value.strip():
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
 def _parse_ids(raw: str) -> tuple[int, ...]:
     if not raw:
         return ()
@@ -70,6 +77,15 @@ class RiskSettings:
 
 
 @dataclass(frozen=True)
+class BackupSettings:
+    enabled: bool
+    interval_hours: float
+    service_account_json_path: str
+    folder_id: str
+    retention_count: int
+
+
+@dataclass(frozen=True)
 class Settings:
     telegram_bot_token: str
     telegram_owner_id: int
@@ -84,6 +100,7 @@ class Settings:
     log_level: str
 
     risk: RiskSettings
+    backup: BackupSettings
 
     order_poll_interval_seconds: int
     price_poll_interval_seconds: int
@@ -106,6 +123,21 @@ def load_settings() -> Settings:
         daily_loss_limit=_get_float("DAILY_LOSS_LIMIT", 2000),
     )
 
+    backup_enabled = _get_bool("GDRIVE_BACKUP_ENABLED", False)
+    backup = BackupSettings(
+        enabled=backup_enabled,
+        interval_hours=_get_float("GDRIVE_BACKUP_INTERVAL_HOURS", 6.0),
+        service_account_json_path=os.getenv("GDRIVE_SERVICE_ACCOUNT_JSON", "").strip(),
+        folder_id=os.getenv("GDRIVE_FOLDER_ID", "").strip(),
+        retention_count=_get_int("GDRIVE_BACKUP_RETENTION_COUNT", 30),
+    )
+    if backup_enabled and (not backup.service_account_json_path or not backup.folder_id):
+        raise ConfigError(
+            "GDRIVE_BACKUP_ENABLED=true requires both GDRIVE_SERVICE_ACCOUNT_JSON "
+            "(path to the service account key file) and GDRIVE_FOLDER_ID "
+            "(the destination Drive folder, shared with the service account's email)."
+        )
+
     return Settings(
         telegram_bot_token=_require("TELEGRAM_BOT_TOKEN"),
         telegram_owner_id=telegram_owner_id,
@@ -117,6 +149,7 @@ def load_settings() -> Settings:
         log_dir=os.getenv("LOG_DIR", "logs").strip(),
         log_level=os.getenv("LOG_LEVEL", "INFO").strip(),
         risk=risk,
+        backup=backup,
         order_poll_interval_seconds=_get_int("ORDER_POLL_INTERVAL_SECONDS", 8),
         price_poll_interval_seconds=_get_int("PRICE_POLL_INTERVAL_SECONDS", 5),
         daily_summary_interval_seconds=_get_int("DAILY_SUMMARY_INTERVAL_SECONDS", 86400),

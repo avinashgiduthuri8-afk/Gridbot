@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from storage.repositories import VALID_MONITOR_INTERVALS, DEFAULT_MONITOR_INTERVAL
+from exchange.exceptions import ExchangeRateLimitError
 from utils.logger import get_logger
 
 if TYPE_CHECKING:
@@ -59,6 +60,15 @@ class MonitorStatus:
 class PriceMonitor:
     """Price monitoring engine — one asyncio task, configurable interval."""
 
+    # Same backoff schedule as OrderMonitor, for consistency: exponential
+    # doubling per consecutive rate-limit hit, capped at _MAX_BACKOFF_SECONDS.
+    # This is EXTRA sleep on top of the normal poll interval — without it, a
+    # short configured interval (as low as 2s) would keep hammering an
+    # already-rate-limited exchange at the same cadence that triggered the
+    # limit in the first place.
+    _BACKOFF_BASE_SECONDS: int = 30
+    _MAX_BACKOFF_SECONDS: int = 300  # 5 minutes
+
     def __init__(
         self,
         exchange: "ExchangeClient",
@@ -80,6 +90,7 @@ class PriceMonitor:
         self._next_refresh: datetime | None = None
         self._api_ok: bool = True
         self._consecutive_failures: int = 0
+        self._consecutive_rate_limit_hits: int = 0
         self._total_cycles: int = 0
         self._task: asyncio.Task | None = None
 
@@ -218,6 +229,33 @@ class PriceMonitor:
         # Step 3 — batch price fetch
         try:
             prices = await self._exchange.get_tickers_batch(symbols)
+        except ExchangeRateLimitError as exc:
+            # Note: by the time this exception reaches us, exchange/coindcx.py's
+            # own tenacity retry has already tried this same request up to 4
+            # times internally (exponential wait, capped ~8s/attempt) and given
+            # up — so this being raised at all means the exchange is under
+            # SUSTAINED pressure, not a one-off blip. The backoff below is a
+            # second, slower-moving tier on top of that: it spaces out entire
+            # polling cycles (30s → 300s) rather than individual HTTP attempts.
+            # Worst case, one cycle's total wall-clock cost is bounded by
+            # coindcx.py's own internal retry ceiling (~tens of seconds) plus
+            # this cycle's backoff sleep — not unbounded, but worth knowing
+            # a badly-rate-limited stretch can take several minutes per cycle
+            # at the top of this schedule.
+            self._consecutive_rate_limit_hits += 1
+            extra = min(
+                self._BACKOFF_BASE_SECONDS * (2 ** (self._consecutive_rate_limit_hits - 1)),
+                self._MAX_BACKOFF_SECONDS,
+            )
+            log.warning(
+                "Rate limit hit in price monitor (consecutive=%d); sleeping "
+                "extra %ds before next cycle: %s",
+                self._consecutive_rate_limit_hits, extra, exc,
+            )
+            self._api_ok = False
+            self._consecutive_failures += 1
+            await asyncio.sleep(extra)
+            return
         except Exception as exc:  # noqa: BLE001
             log.error("Batch ticker fetch failed: %s", exc)
             self._api_ok = False
@@ -226,6 +264,11 @@ class PriceMonitor:
             for sym in symbols:
                 log.warning("Price unavailable for %s due to batch failure", sym)
             return
+
+        # Full success — reset rate-limit backoff too, not just the generic
+        # failure counter, so a recovered exchange doesn't carry over a long
+        # backoff from an earlier, unrelated failure streak.
+        self._consecutive_rate_limit_hits = 0
 
         # Flag partial failures (symbols that came back empty from the batch)
         missing = symbols - prices.keys()

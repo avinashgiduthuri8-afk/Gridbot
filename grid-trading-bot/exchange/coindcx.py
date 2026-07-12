@@ -410,6 +410,13 @@ class CoinDCXClient(ExchangeClient):
     @staticmethod
     def _parse_order(order: dict[str, Any]) -> ExchangeOrder:
         raw_status = str(order.get("status", "open")).lower()
+        if raw_status not in _STATUS_MAP:
+            log.warning(
+                "coindcx: unrecognized order status %r for exchange order %s "
+                "(market=%s) — defaulting to OPEN. This may indicate a new "
+                "CoinDCX status value that _STATUS_MAP does not cover yet.",
+                raw_status, order.get("id", "?"), order.get("market", "?"),
+            )
         return ExchangeOrder(
             exchange_order_id=str(order.get("id", "")),
             symbol=order.get("market", ""),

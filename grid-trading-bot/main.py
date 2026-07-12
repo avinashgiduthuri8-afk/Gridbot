@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import signal
+from typing import TYPE_CHECKING
 
 from telegram import Bot
 
@@ -32,6 +33,12 @@ from trading.price_monitor import PriceMonitor
 from trading.recovery import RecoveryManager
 from utils.helpers import now_iso
 from utils.logger import get_logger, setup_logging
+
+if TYPE_CHECKING:
+    # Only imported for type checking — the real import is lazy and
+    # opt-in inside async_main(), so google-auth is not a hard dependency
+    # for anyone who doesn't enable Drive backup.
+    from storage.drive_backup import DriveBackupManager
 
 log = get_logger("trading")
 
@@ -81,6 +88,25 @@ async def run_daily_summary_loop(
             log.exception("Daily summary loop failed")
 
 
+async def run_drive_backup_loop(
+    backup_manager: "DriveBackupManager", notifier: Notifier, interval_seconds: int
+) -> None:
+    """Periodically snapshot the DB and upload it to Google Drive.
+
+    Runs on a fixed interval, same resilience pattern as the other
+    background loops here: a failure in one cycle is logged and notified,
+    never crashes the loop, and the next cycle proceeds normally.
+    """
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            file_id = await backup_manager.create_backup_and_upload()
+            await notifier.drive_backup_completed(file_id)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Drive backup loop failed")
+            await notifier.drive_backup_failed(str(exc))
+
+
 async def async_main() -> None:
     try:
         settings = load_settings()
@@ -107,6 +133,7 @@ async def async_main() -> None:
     notifier = Notifier(bot, chat_ids)
 
     risk_manager = RiskManager(settings.risk, repos)
+    await risk_manager.load_emergency_stop()
     order_manager = OrderManager(exchange, repos)
     paper_exchange = PaperExchangeClient(exchange)
     paper_order_manager = OrderManager(paper_exchange, repos)
@@ -180,6 +207,34 @@ async def async_main() -> None:
         run_alert_check_loop(alert_manager, exchange, notifier, settings.price_poll_interval_seconds)
     )
 
+    drive_backup_task: asyncio.Task | None = None
+    if settings.backup.enabled:
+        # Lazy, opt-in import — google-auth is only required when Drive
+        # backup is actually turned on, not a hard dependency otherwise.
+        try:
+            from storage.drive_backup import DriveBackupManager
+        except ImportError as exc:
+            log.error(
+                "GDRIVE_BACKUP_ENABLED=true but the google-auth package is not "
+                "installed (pip install google-auth). Drive backup will NOT run "
+                "this session. Original error: %s", exc,
+            )
+        else:
+            drive_backup_manager = DriveBackupManager(
+                db_path=settings.database_path,
+                folder_id=settings.backup.folder_id,
+                service_account_json_path=settings.backup.service_account_json_path,
+                retention_count=settings.backup.retention_count,
+            )
+            interval_seconds = int(settings.backup.interval_hours * 3600)
+            drive_backup_task = asyncio.create_task(
+                run_drive_backup_loop(drive_backup_manager, notifier, interval_seconds)
+            )
+            log.info(
+                "Google Drive backup enabled: every %.1fh, folder=%s, retention=%d",
+                settings.backup.interval_hours, settings.backup.folder_id, settings.backup.retention_count,
+            )
+
     stop_event = asyncio.Event()
 
     def _handle_signal() -> None:
@@ -215,6 +270,8 @@ async def async_main() -> None:
 
     daily_summary_task.cancel()
     alert_task.cancel()
+    if drive_backup_task is not None:
+        drive_backup_task.cancel()
     await price_monitor.stop()
     await order_monitor.stop()
     await exchange.close()

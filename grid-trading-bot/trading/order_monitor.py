@@ -92,8 +92,13 @@ class OrderMonitor:
                 self._consecutive_rate_limit_hits = 0
             except ExchangeRateLimitError:
                 self._consecutive_rate_limit_hits += 1
+                # True exponential doubling: 30s, 60s, 120s, 240s, then capped
+                # at _MAX_BACKOFF_SECONDS. The previous formula (base * count)
+                # was linear (30, 60, 90, 120...), not exponential as the
+                # class docstring claimed — this now matches the stated intent
+                # and backs off faster under sustained rate-limiting.
                 extra = min(
-                    self._BACKOFF_BASE_SECONDS * self._consecutive_rate_limit_hits,
+                    self._BACKOFF_BASE_SECONDS * (2 ** (self._consecutive_rate_limit_hits - 1)),
                     self._MAX_BACKOFF_SECONDS,
                 )
                 log.warning(

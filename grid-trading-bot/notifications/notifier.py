@@ -291,6 +291,7 @@ class Notifier:
         reconciled: int,
         orphans_linked: int = 0,
         fills_recovered: int = 0,
+        zombie_grids: int = 0,
     ) -> None:
         if active_count > 0 or reconciled > 0:
             lines = [
@@ -302,6 +303,8 @@ class Notifier:
                 lines.append(f"Offline fills found: {fills_recovered}")
             if orphans_linked:
                 lines.append(f"Orphan orders linked: {orphans_linked}")
+            if zombie_grids:
+                lines.append(f"⚠️ Zombie grids needing review: {zombie_grids}")
             await self.send("\n".join(lines))
         else:
             await self.send("🔄 <b>Recovery Complete</b>\nNo active grids to restore.")
@@ -350,6 +353,22 @@ class Notifier:
             f"🗑 <b>Grid Deleted</b>\n"
             f"Coin: <b>{symbol}</b> | Grid: <code>{grid_id}</code>"
         )
+
+    async def drive_backup_completed(self, file_id: str) -> None:
+        """Notify that a scheduled Google Drive backup succeeded."""
+        await self.send(
+            f"☁️ <b>Drive Backup Complete</b>\n"
+            f"Database snapshot uploaded (id <code>{file_id}</code>)."
+        )
+
+    async def drive_backup_failed(self, reason: str) -> None:
+        """Notify that a scheduled Google Drive backup failed.
+
+        Suppresses repeats using the same cooldown as sync_error, since a
+        persistent misconfiguration (bad credentials, folder not shared)
+        would otherwise fire on every backup interval.
+        """
+        await self.sync_error(context="Drive backup", message=reason)
 
     async def orphan_orders_detected(self, orphans: list[dict]) -> None:
         """Notify the user about exchange orders that have no local DB record.

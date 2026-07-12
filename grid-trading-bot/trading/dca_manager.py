@@ -63,6 +63,19 @@ class DCAManager:
             self._grid_locks[grid_id] = asyncio.Lock()
         return self._grid_locks[grid_id]
 
+    async def _get_wallet_balance(self, mode: str) -> float:
+        """Return the INR balance to risk-check against for this grid's mode.
+
+        Shared by start_grid and every subsequent buy so paper and real grids
+        are evaluated against the same balance figure every time — previously
+        start_grid used a hardcoded paper balance while no other call site
+        checked balance at all.
+        """
+        if mode == "paper":
+            return 1_000_000.0
+        wallet = await self._exchange.get_balance("INR")
+        return wallet.balance
+
     # ------------------------------------------------------------------
     # Grid lifecycle
     # ------------------------------------------------------------------
@@ -87,12 +100,16 @@ class DCAManager:
         max_levels: int = int(params["max_levels"])
         stop_loss_pct: float = float(params["stop_loss_percentage"])
         mode: str = str(params.get("mode", "real"))
+        trailing_enabled: bool = bool(params.get("trailing_enabled", False))
+        trailing_pct: float | None = None
+        if trailing_enabled:
+            trailing_pct = float(params.get("trailing_percentage") or 0)
+            if not (0 < trailing_pct < 100):
+                raise ValueError(
+                    f"trailing_percentage must be between 0 and 100, got {trailing_pct}"
+                )
 
-        if mode == "paper":
-            wallet_balance = 1_000_000.0
-        else:
-            wallet = await self._exchange.get_balance("INR")
-            wallet_balance = wallet.balance
+        wallet_balance = await self._get_wallet_balance(mode)
         # Pass the full DCA ladder commitment so the risk manager can correctly
         # assess whether total capital limits would be breached across all grids.
         full_ladder_commitment = base_investment + dip_buy_amount * (max_levels - 1)
@@ -125,6 +142,9 @@ class DCAManager:
             profit_percentage=profit_pct,
             max_levels=max_levels,
             stop_loss_percentage=stop_loss_pct,
+            trailing_enabled=trailing_enabled,
+            trailing_percentage=trailing_pct,
+            trailing_peak_price=None,
             current_level=0,
             total_quantity=0.0,
             total_investment=0.0,
@@ -155,6 +175,7 @@ class DCAManager:
                 price=entry_price,
                 quantity=initial_qty,
                 order_type="market_order",
+                mode=mode,
             )
         except Exception as exc:
             # Roll back the grid row entirely — a zombie ACTIVE/STOPPED record with
@@ -262,12 +283,32 @@ class DCAManager:
             await self._execute_stop_loss(grid, current_price)
             return
 
-        # 2. Profit sell — only if no pending sell already in flight
+        # 2. Profit sell / trailing take-profit — only if no pending sell already in flight
+        if grid["trailing_peak_price"] is not None:
+            # Trailing is already active for this profit cycle: track the peak
+            # and check for the trail-stop on every tick, independent of
+            # next_sell_price — once trailing has started, price falling back
+            # below next_sell_price must NOT stop us tracking the trail, or
+            # a fast reversal could skip the trailing-stop check entirely.
+            if await self._repos.orders.count_pending_side(grid_id, "sell") == 0:
+                await self._handle_trailing_tick(grid, current_price)
+            return
         if (
             is_profit_triggered(current_price, grid["next_sell_price"])
             and await self._repos.orders.count_pending_side(grid_id, "sell") == 0
         ):
-            await self._execute_profit_sell(grid, current_price)
+            if grid["trailing_enabled"]:
+                await self._repos.grids.update_state(grid_id, trailing_peak_price=current_price)
+                log.info(
+                    "Trailing take-profit activated for %s at ₹%.2f (trail %.2f%%)",
+                    grid_id, current_price, grid["trailing_percentage"],
+                )
+                await self._notifier.trailing_activated(
+                    symbol=symbol, grid_id=grid_id, peak_price=current_price,
+                    trailing_percentage=grid["trailing_percentage"],
+                )
+            else:
+                await self._execute_profit_sell(grid, current_price)
             return
 
         # 3. Dip buy — only if below max levels and no buy in flight
@@ -341,8 +382,54 @@ class DCAManager:
                 price_precision=market_info.base_currency_precision,
             )
         except (ExchangeError, ValueError) as exc:
+            # Previously this only logged, with no Telegram notification —
+            # a ValueError here means dip_buy_amount is configured too small
+            # for the current price and this grid will silently fail this
+            # same computation on every future trigger with zero visibility.
+            # Notify the same way every other failed-attempt branch in this
+            # method does, so a persistent misconfiguration is actually seen.
             log.error("Cannot compute dip buy qty for %s: %s", grid_id, exc)
+            await self._notifier.order_failed(
+                symbol=symbol, grid_id=grid_id, order_id="(not placed)",
+                side="buy", reason=str(exc), mode=mode,
+            )
             return
+
+        # Risk gate: a dip buy commits *new* capital, exactly like starting a
+        # grid does, so it must pass through the same emergency-stop / daily-
+        # loss-limit / balance checks as check_can_start_grid — previously
+        # this check only ran once, at grid creation, and every subsequent
+        # dip buy bypassed it entirely (emergency stop had no effect on
+        # already-running grids). Profit-sells and stop-loss sells are
+        # deliberately NOT gated here: they reduce risk, and blocking an exit
+        # during an emergency stop or daily-loss halt would trap capital in a
+        # losing position instead of protecting it.
+        order_value_inr = qty * current_price
+        try:
+            wallet_balance = await self._get_wallet_balance(mode)
+            risk_result = await self._risk.check_can_place_order(order_value_inr, wallet_balance)
+        except Exception as exc:
+            # Fail-safe: if we can't even determine whether the risk gate
+            # allows this buy (exchange balance call failed, DB error reading
+            # daily stats, etc.), do NOT place the order. Previously an
+            # exception here would only be caught by price_monitor's generic
+            # per-grid handler, logged, and never surfaced to the user —
+            # this grid would then silently stop progressing with no visible
+            # explanation. Now it's reported the same way an order failure is.
+            log.error("Risk gate check errored for dip buy on %s: %s", grid_id, exc)
+            await self._notifier.order_failed(
+                symbol=symbol, grid_id=grid_id, order_id="(blocked)",
+                side="buy", reason=f"Risk check failed: {exc}", mode=mode,
+            )
+            return
+        if not risk_result.allowed:
+            log.warning("Dip buy for %s blocked by risk gate: %s", grid_id, risk_result.reason)
+            await self._notifier.order_failed(
+                symbol=symbol, grid_id=grid_id, order_id="(blocked)",
+                side="buy", reason=risk_result.reason, mode=mode,
+            )
+            return
+
         try:
             order = await self._order_manager.place_dca_order(
                 grid_id=grid_id,
@@ -368,6 +455,36 @@ class DCAManager:
                 side="buy", reason=str(exc), mode=mode,
             )
 
+    async def _handle_trailing_tick(self, grid: dict, current_price: float) -> None:
+        """Update the trailing peak, or execute the sell once price has
+        pulled back trailing_percentage from that peak.
+
+        Precondition: grid["trailing_peak_price"] is not None (trailing is
+        active for this profit cycle) and there's no sell already pending.
+        """
+        grid_id: str = grid["grid_id"]
+        peak: float = grid["trailing_peak_price"]
+        trailing_pct: float = grid["trailing_percentage"]
+
+        if current_price > peak:
+            await self._repos.grids.update_state(grid_id, trailing_peak_price=current_price)
+            return
+
+        drop_pct = (peak - current_price) / peak * 100 if peak > 0 else 0.0
+        if drop_pct < trailing_pct:
+            return  # still within the trailing band, keep waiting
+
+        log.info(
+            "Trailing take-profit stop hit for %s: peak ₹%.2f, current ₹%.2f (%.2f%% pullback)",
+            grid_id, peak, current_price, drop_pct,
+        )
+        await self._execute_profit_sell(grid, current_price)
+        # Reset regardless of outcome (success, dust write-off, or a
+        # retryable failure) — a fresh trailing cycle will re-activate
+        # cleanly from whatever price prevails on the next trigger, rather
+        # than risk resuming from a stale peak.
+        await self._repos.grids.update_state(grid_id, trailing_peak_price=None)
+
     async def _execute_profit_sell(self, grid: dict, current_price: float) -> None:
         grid_id: str = grid["grid_id"]
         symbol: str = grid["symbol"]
@@ -382,7 +499,14 @@ class DCAManager:
                 price_precision=market_info.base_currency_precision,
             )
         except (ExchangeError, ValueError) as exc:
+            # Same fix as _execute_dip_buy above: a persistent
+            # misconfiguration (profit_sell_amount too small for current
+            # price) must not fail silently forever with only a log line.
             log.error("Cannot compute profit sell qty for %s: %s", grid_id, exc)
+            await self._notifier.order_failed(
+                symbol=symbol, grid_id=grid_id, order_id="(not placed)",
+                side="sell", reason=str(exc), mode=mode,
+            )
             return
 
         sell_qty = clamp_sell_quantity(desired_qty, grid["total_quantity"], market_info.step_size)
@@ -404,6 +528,41 @@ class DCAManager:
             unit_label=market_info.target_currency_short_name or "coins",
         )
         if not check.valid:
+            # If this sell was clamped down to (essentially) the entire
+            # remaining position, there is no future price movement that
+            # will change the outcome — total_quantity itself is the
+            # unsellable dust amount, and the grid would otherwise sit
+            # ACTIVE forever, re-attempting and re-failing this same sell on
+            # every future profit trigger. This mirrors the stop-loss dust
+            # write-off below. A genuine *partial* sell that fails (sell_qty
+            # meaningfully less than total_quantity) is left to retry later,
+            # since there's still a real position that a future trigger
+            # could act on differently.
+            if sell_qty >= grid["total_quantity"]:
+                log.warning(
+                    "Profit sell for %s: remaining position %.8f cannot be sold "
+                    "(%s) and this was the full remaining quantity — writing "
+                    "off as dust and closing grid.",
+                    grid_id, sell_qty, check.reason,
+                )
+                await self._repos.grids.update_state(
+                    grid_id,
+                    status=GridStatus.STOPPED.value,
+                    total_quantity=0.0,
+                    total_investment=0.0,
+                )
+                await self._notifier.order_failed(
+                    symbol=symbol, grid_id=grid_id, order_id="(not placed)",
+                    side="sell", mode=mode,
+                    reason=(
+                        f"Grid closed — {sell_qty:.8f} "
+                        f"{market_info.target_currency_short_name or 'coins'} "
+                        f"(entire remaining position) could not be sold "
+                        f"({check.reason}) and was written off as dust."
+                    ),
+                )
+                return
+
             log.warning(
                 "Profit sell for %s rejected after clamping: %s", grid_id, check.reason,
             )
@@ -458,12 +617,16 @@ class DCAManager:
 
         pnl = (current_price - avg_entry) * sell_qty
 
-        # Unlike a profit sell (where the grid stays open and can simply
-        # retry later), a stop-loss is a FINAL exit. If the clamped
-        # remainder fails the shared rule check (e.g. it's an unsellable
-        # "dust" amount below min_quantity/min_notional), we cannot leave
-        # the grid open forever waiting for a sell that will never clear —
-        # write the position off as dust, notify, and close the grid.
+        # A stop-loss is always a FINAL, full-position exit — unlike a
+        # partial profit sell (which can retry a later, smaller clamp on a
+        # future trigger if there's real quantity left), there's no "try
+        # again later" for a stop-loss. If the clamped remainder fails the
+        # shared rule check (e.g. it's an unsellable "dust" amount below
+        # min_quantity/min_notional), we cannot leave the grid open forever
+        # waiting for a sell that will never clear — write the position off
+        # as dust, notify, and close the grid. (Profit-sell has the same
+        # write-off for the equivalent case — see _execute_profit_sell —
+        # when its clamp also reduces to the entire remaining position.)
         if market_info is not None:
             check = validate_quantity(
                 sell_qty, current_price,

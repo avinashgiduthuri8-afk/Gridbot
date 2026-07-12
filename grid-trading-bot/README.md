@@ -1,30 +1,35 @@
-# Manual Grid Trading Bot for CoinDCX
+# Manual DCA (Dollar-Cost-Averaging) Trading Bot for CoinDCX
 
-A production-ready, standalone Python bot that runs manual grid trading
-strategies on [CoinDCX](https://coindcx.com), controlled entirely through
-Telegram. There is no web UI, no dashboard, no market scanner, and no AI
-coin-picking — **you** decide which coin to trade and the price range; the
-bot only manages the grid's order lifecycle.
+A production-ready, standalone Python bot that runs manual per-coin DCA
+trading strategies on [CoinDCX](https://coindcx.com), controlled entirely
+through Telegram. There is no web UI, no dashboard, no market scanner, and no
+AI coin-picking — **you** decide which coin to trade and its parameters; the
+bot only manages the position's order lifecycle.
 
 ## What this bot does
 
-- You send `/startgrid` in Telegram and walk through a guided setup:
-  choose a coin (e.g. `BTCINR`), an upper/lower price range, number of
-  grid levels, investment per grid order, and grid type (arithmetic or
-  geometric spacing).
-- The bot places a ladder of buy orders across the range. When a buy
-  fills, it automatically places a matching sell one level up. When that
-  sell fills, profit is realized and a new buy is placed one level down —
-  the grid keeps cycling until you pause or stop it.
-- You can run multiple grids simultaneously (e.g. one for BTCINR, one for
-  ETHINR), each with its own configuration.
-- All state (grids, orders, positions, trade history) is persisted in
+- You send `/newgrid` in Telegram and walk through a guided setup: choose a
+  coin (e.g. `BTCINR`), an entry price (or use the live market price), a base
+  investment amount, a dip-buy amount and trigger percentage, a profit-sell
+  amount and trigger percentage, a maximum number of DCA levels, a stop-loss
+  percentage, and a mode (**paper** or **real**).
+- The bot places an initial buy, then averages down with further buys each
+  time price drops by the configured dip percentage, and sells a configured
+  portion each time price rises by the configured profit percentage off the
+  *average* entry price. A stop-loss closes the entire position if price
+  falls too far below the average entry.
+- **Paper mode** simulates order placement (no real money, no real exchange
+  orders) while still using live market prices — useful for testing a
+  configuration before running it for real.
+- You can run multiple DCA positions ("grids") simultaneously (e.g. one for
+  BTCINR, one for ETHINR), each with its own configuration and mode.
+- All state (grids, orders, trade history, price alerts) is persisted in
   SQLite, so if the bot process restarts or the server reboots, it
-  reconciles with the exchange on startup and resumes exactly where it
-  left off — no manual re-entry needed.
+  reconciles with the exchange on startup and resumes exactly where it left
+  off — no manual re-entry needed.
 - Risk limits (max total capital, max capital per coin, max simultaneous
-  grids, minimum wallet balance, daily loss limit) are enforced before
-  every grid start and every order placement.
+  grids, minimum wallet balance, daily loss limit) are enforced before every
+  grid start and before every dip-buy.
 - Every material event (grid started/paused/stopped, buy/sell executed,
   profit updates, errors, recovery on restart) is pushed to you as a
   Telegram notification.
@@ -49,20 +54,24 @@ grid-trading-bot/
 ├── storage/
 │   ├── database.py           # SQLite connection + schema migration
 │   ├── models.py              # Dataclasses mirroring each table
-│   └── repositories.py        # Typed CRUD access per table
+│   └── repositories.py        # Typed CRUD access per table (grids, orders, trade history,
+│                                daily stats, price alerts, monitor settings)
 ├── exchange/
 │   ├── base.py                # Abstract exchange interface
 │   ├── coindcx.py             # CoinDCX REST client (HMAC-signed, retries, rate-limit handling)
+│   ├── paper_exchange.py       # Simulated order placement for paper-mode grids
 │   └── exceptions.py
 ├── grid/
-│   ├── generator.py           # Arithmetic / geometric grid price generation + validation
-│   ├── lifecycle.py           # Pure profit/range calculations (unit-tested)
-│   └── models.py
+│   └── dca_engine.py          # Pure math: average-entry, next-buy/sell/stop-loss prices,
+│                                shared exchange-rule validation (single source of truth)
 ├── trading/
-│   ├── grid_manager.py        # Core orchestrator: start/pause/resume/stop, fill handling
-│   ├── order_manager.py       # Only component that places/cancels orders on the exchange
-│   ├── position_manager.py    # Tracks open inventory until closed by a matching sell
-│   ├── order_monitor.py       # Background loop polling for order fills
+│   ├── dca_manager.py         # Core orchestrator: start/pause/resume/stop, trigger checks, fill handling
+│   ├── order_manager.py       # Places/cancels real or paper orders, order state machine
+│   ├── mixed_order_manager.py # Routes order calls to real vs. paper OrderManager by grid mode
+│   ├── order_monitor.py       # Background loop polling for order fills + periodic full sync
+│   ├── price_monitor.py       # Background loop polling prices and dispatching trigger checks
+│   ├── coin_validator.py      # Pre-flight investment/pair validation for the /newgrid conversation
+│   ├── alert_manager.py       # One-shot price alerts, persisted in SQLite
 │   └── recovery.py            # Startup reconciliation against exchange state
 ├── risk/
 │   └── risk_manager.py        # Centralized risk checks (capital limits, daily loss, emergency stop)
@@ -71,13 +80,15 @@ grid-trading-bot/
 ├── bot_telegram/               # Telegram bot layer (named to avoid clashing with the
 │   ├── bot.py                  # `telegram` package from python-telegram-bot)
 │   ├── handlers.py             # All non-conversation commands (/status, /grids, /pause, ...)
-│   ├── conversations.py        # Guided /startgrid conversation flow
+│   ├── conversations.py        # Guided /newgrid conversation flow
 │   ├── keyboards.py            # Inline/reply keyboards
 │   └── formatters.py           # DB row -> Telegram message formatting
 ├── utils/
 │   ├── logger.py               # Per-channel rotating file logging
 │   └── helpers.py               # ID generation, Decimal-safe math
-├── tests/                      # pytest suite (grid math, risk checks, repository integration)
+├── tests/                      # pytest suite (DCA math, risk checks, repository integration)
+├── scripts/
+│   └── audit_exchange_layer.py # Standalone dev script for spot-checking exchange-rule math
 ├── data/                        # SQLite database file lives here
 └── logs/                        # Rotating log files (trading, exchange, telegram, database, grid, errors)
 ```
@@ -117,7 +128,7 @@ grid-trading-bot/
    at `data/grid_bot.db`. Rotating log files are written to `logs/`.
 
 4. **Talk to your bot on Telegram.** Send `/start`, then `/help` to see
-   every command, and `/startgrid` to launch your first grid.
+   every command, and `/newgrid` to launch your first grid.
 
 ## Running on Replit
 
@@ -139,36 +150,48 @@ Replit:
 ## Command reference
 
 **Grid control**
-- `/startgrid` — guided setup for a new grid (pick coin, range, levels, investment, type)
+- `/newgrid` — start a new grid; first choose:
+  - **1️⃣ Default Grid** — type only a coin symbol, everything else uses your
+    saved defaults (base investment, dip/profit amounts and percentages, max
+    levels, stop loss, and last-used trading mode)
+  - **2️⃣ Custom Grid** — the full guided setup (pick coin, entry price, base
+    investment, dip-buy amount/percentage, profit-sell amount/percentage, max
+    levels, stop-loss percentage, and paper/real mode)
+- `/defaults` — view your saved Default Grid settings, or edit one with
+  `/defaults set <field> <value>` (e.g. `/defaults set base_investment 750`,
+  or `/defaults set last_mode paper` / `ask`). Saved in SQLite, persists
+  across restarts.
 - `/stopgrid <grid_id>` — stop a running grid and cancel its resting orders
 - `/pause <grid_id>` — pause a grid (cancels resting orders, keeps config)
-- `/resume <grid_id>` — resume a paused grid (re-places the buy ladder)
+- `/resume <grid_id>` — resume a paused grid
 
 **Monitoring**
 - `/status` — bot health, wallet balance, emergency-stop state
+- `/balance` — current CoinDCX wallet balance
+- `/coininfo <symbol>` — exchange rules for a coin (step size, precision, min notional/quantity)
+- `/paper` — list of paper-mode grids
 - `/grids` — list all grids with quick pause/resume/stop buttons
 - `/positions` — all currently open positions across all grids
 - `/profit` — realized profit per grid and in total
 - `/summary` — today's P&L, lifetime profit, and active grid standings (on demand)
 - `/history <symbol>` — most recent buy/sell fills for a coin, with per-sell P&L and originating grid
+- `/monitor` — price/order monitor health (poll interval, degraded state, failure counts)
 - `/export` — download the complete trade history as a CSV file (for offline accounting/tax analysis)
 - `/backup` — download the raw SQLite database file (all grids, configs, and history in one file)
 - `/logs` — most recent log entries
 
-**Price alerts**
+**Price alerts** (persisted across restarts)
 - `/alert <symbol> <price>` — set a one-shot alert; the bot checks the current live price to determine direction (above/below) and notifies you the moment the price crosses the target
 - `/alerts` — list all active alerts
 - `/delalert <symbol>` — cancel all alerts for a coin
 
 **Emergency control**
-- `/emergencystop` — immediately block all new trades and grid starts; sends a push notification to confirm activation
+- `/emergencystop` — immediately block all new grid starts and dip-buys (persisted — survives a restart); does not block profit-sells or stop-loss exits, since those reduce risk rather than add it
 - `/clearemergency` — re-enable trading after an emergency stop (requires inline confirmation button press to prevent accidents); paused grids must be manually resumed with `/resume`
 
-**Configuration**
-- `/settings` — view saved per-coin defaults
-- `/setinvestment <symbol> <amount>` — change investment per grid order for future grids
-- `/setlevels <symbol> <levels>` — change grid level count for future grids
-- `/setrange <symbol> <lower> <upper>` — change default price range for future grids
+There is no `/settings`, `/setinvestment`, `/setlevels`, or `/setrange`
+command — every grid's parameters are set once, at creation, via `/newgrid`.
+To change a coin's parameters, stop the old grid and start a new one.
 
 ## Risk management
 
@@ -184,12 +207,14 @@ before every grid start and order placement:
 | `DAILY_LOSS_LIMIT` | Realized loss threshold that halts new trades for the day |
 
 An emergency-stop switch also exists in code (`RiskManager.trigger_emergency_stop`)
-that immediately blocks all new grid starts and order placements.
+that immediately blocks all new grid starts and dip-buys, and is persisted in
+SQLite so it survives a restart — it does not block profit-sells or
+stop-loss exits.
 
 ## Daily summary notifications
 
 In addition to real-time push notifications for every grid lifecycle event
-(grid started/stopped/paused, order filled, range breach, risk block, errors),
+(grid started/stopped/paused, order filled, dip/profit/stop-loss trigger, risk block, errors),
 the bot pushes a periodic Telegram summary covering:
 
 - Today's realized P&L and number of completed trades
@@ -205,6 +230,43 @@ retried on the next cycle.
 You can also pull the same report on demand at any time with `/summary`
 (no need to wait for the scheduled push).
 
+## Automatic Google Drive backup (optional)
+
+The manual `/backup` command works anytime, but for unattended production
+use you can also enable periodic automatic backups to Google Drive — off
+by default, opt-in via environment variables.
+
+1. Create a Google Cloud project (or reuse one), enable the **Drive API**,
+   and create a **service account**. Download its JSON key file.
+2. In Google Drive, create (or pick) a destination folder, open its
+   **Share** settings, and share it with the service account's email
+   address (found in the key file, looks like
+   `something@project-id.iam.gserviceaccount.com`) with **Editor** access.
+3. Copy the folder ID from the folder's URL
+   (`https://drive.google.com/drive/folders/<this-part-is-the-id>`).
+4. Install the one extra dependency this needs:
+   `pip install google-auth` (already listed as optional in
+   `requirements.txt`).
+5. Set in your `.env`:
+   ```
+   GDRIVE_BACKUP_ENABLED=true
+   GDRIVE_SERVICE_ACCOUNT_JSON=/path/to/your-key-file.json
+   GDRIVE_FOLDER_ID=your_folder_id_here
+   GDRIVE_BACKUP_INTERVAL_HOURS=6
+   GDRIVE_BACKUP_RETENTION_COUNT=30
+   ```
+
+Every interval, the bot takes a **consistent snapshot** of the SQLite
+database (using SQLite's own backup API, not a raw file copy — this
+correctly captures any data still sitting in the WAL file that hasn't been
+checkpointed yet, unlike a plain file copy would), uploads it to the
+configured folder, and deletes the oldest backups beyond
+`GDRIVE_BACKUP_RETENTION_COUNT`. You'll get a Telegram notification on
+success or failure. If `google-auth` isn't installed but
+`GDRIVE_BACKUP_ENABLED=true`, the bot logs an error and simply skips Drive
+backup for that session rather than failing to start — everything else
+continues normally.
+
 ## Recovery after restart
 
 On every startup, `trading/recovery.py` runs before the Telegram bot
@@ -216,7 +278,7 @@ starts polling:
    cancelled while the bot was offline.
 3. Sends a Telegram summary of what was restored.
 
-The order monitor and range-breach checker then resume normally against
+The order monitor and price monitor then resume normally against
 the reconciled state — no manual intervention required after a crash or
 redeploy.
 
@@ -227,10 +289,10 @@ cd grid-trading-bot
 python -m pytest tests/ -v
 ```
 
-The suite covers grid price generation (arithmetic/geometric), pure
-profit/range calculations, risk manager decision logic, and SQLite
-repository CRUD behavior — all without touching the real CoinDCX API or
-Telegram.
+The suite covers DCA math (average entry, next buy/sell/stop-loss prices,
+exchange-rule validation), risk manager decision logic, order lifecycle and
+recovery, and SQLite repository CRUD behavior — all without touching the
+real CoinDCX API or Telegram.
 
 ## Production checklist (VPS / always-on deployment)
 
@@ -239,17 +301,19 @@ Telegram.
 - [ ] CoinDCX API key permissions are limited to trading only (no withdrawal permission).
 - [ ] Run under a process supervisor (systemd, `pm2`, or Replit's Reserved VM deployment) so the bot restarts automatically on crash or reboot.
 - [ ] `logs/` directory is on persistent storage and monitored/rotated (rotation is already handled in-app via `RotatingFileHandler`).
-- [ ] `data/grid_bot.db` is backed up regularly — this is the only source of truth for grid/order/position state.
+- [ ] `data/grid_bot.db` is backed up regularly — this is the only source of truth for grid/order/position state. Either run `/backup` on a schedule yourself, or enable automatic Google Drive backups (see "Automatic Google Drive backup" above).
 - [ ] Telegram bot's `TELEGRAM_CHAT_ID` is your own ID, and `TELEGRAM_ALLOWED_USER_IDS` only includes people you trust with trading control.
-- [ ] Test with small investment amounts (`INVESTMENT_PER_GRID`) and a narrow price range before committing significant capital.
+- [ ] Test with small investment amounts and a narrow dip/profit percentage in **paper mode** first, then with small real capital, before committing significant capital.
 - [ ] Confirm `/status` reports the expected wallet balance immediately after startup.
 - [ ] Verify recovery works as expected: restart the process while a grid is active and confirm the Telegram recovery summary and `/grids` output match what you expect.
 
 ## Important notes
 
-- This bot places real orders with real money once configured with live
-  CoinDCX credentials. There is no paper-trading / simulation mode.
+- This bot places real orders with real money once you start a grid in
+  **real** mode. A **paper** mode is also available (simulated order
+  placement against live market prices, no real money at risk) — select it
+  as the last step of `/newgrid`.
 - The bot never scans markets, ranks coins, or recommends what to trade.
-  Every grid is started explicitly by you via `/startgrid`.
+  Every grid is started explicitly by you via `/newgrid`.
 - Only the Telegram user ID(s) in `TELEGRAM_CHAT_ID` / `TELEGRAM_ALLOWED_USER_IDS`
   can control the bot — all other users are rejected by every handler.

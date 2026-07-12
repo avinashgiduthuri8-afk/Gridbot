@@ -79,6 +79,7 @@ class RecoveryManager:
         submitted_reconciled = await self._reconcile_submitted_orders()
         reconciled, fills_recovered = await self._reconcile_open_orders()
         orphans_linked = await self._detect_orphan_orders(active_grids)
+        zombie_grids = await self._detect_zombie_grids(active_grids)
 
         total_reconciled = submitted_reconciled + reconciled
 
@@ -87,6 +88,7 @@ class RecoveryManager:
             "reconciled_orders": total_reconciled,
             "fills_recovered": fills_recovered,
             "orphans_linked": orphans_linked,
+            "zombie_grids": zombie_grids,
         }
         log.info(
             "Recovery complete: grids=%d reconciled=%d fills=%d orphans=%d",
@@ -98,6 +100,7 @@ class RecoveryManager:
             reconciled=total_reconciled,
             orphans_linked=orphans_linked,
             fills_recovered=fills_recovered,
+            zombie_grids=zombie_grids,
         )
         return summary
 
@@ -332,3 +335,54 @@ class RecoveryManager:
             await self._notifier.orphan_orders_detected(orphan_details)
 
         return orphan_count
+
+    # ------------------------------------------------------------------
+    # Step 5: Zombie grid detection (crash between grid-row insert and
+    # initial-order-row insert)
+    # ------------------------------------------------------------------
+
+    async def _detect_zombie_grids(self, active_grids: list[dict]) -> int:
+        """Flag grids with no order rows at all — a crash between
+        ``repos.grids.create()`` and the initial order being written in
+        ``start_grid()``.
+
+        This is distinct from orphan detection above: an orphan is a real
+        exchange order with no local row; a zombie grid is a local grid row
+        with *no order rows whatsoever*, real or otherwise, so
+        ``check_grid_triggers`` (which only acts once ``current_level > 0``)
+        would otherwise leave it silently stuck forever with no path to
+        progress and no error ever surfaced.
+
+        We do not auto-delete these grids: the initial exchange call may or
+        may not have gone out before the crash, and if it did, the orphan
+        check above is the correct place to surface that fact so the user
+        can decide (link it manually, or cancel on CoinDCX). Here we only
+        notify so the user knows this grid needs manual attention — likely
+        `/stopgrid` followed by a fresh `/newgrid`.
+        """
+        zombie_count = 0
+        for grid in active_grids:
+            if grid.get("current_level", 0):
+                continue  # already has at least one filled buy
+            orders = await self._repos.orders.list_for_grid(grid["grid_id"])
+            if orders:
+                continue  # has at least one order row (even if failed/pending)
+            zombie_count += 1
+            log.error(
+                "Recovery: ZOMBIE grid %s (%s) has zero order rows — the "
+                "initial buy was never recorded, likely due to a crash "
+                "between grid creation and order placement. Manual review "
+                "needed: check CoinDCX for a stray order, then /stopgrid "
+                "this grid and start a fresh one if nothing was placed.",
+                grid["grid_id"], grid["symbol"],
+            )
+            await self._notifier.error(
+                context=f"Zombie grid {grid['grid_id']} ({grid['symbol']})",
+                message=(
+                    "This grid has no order history at all — its initial buy "
+                    "was never recorded, likely from a crash during grid "
+                    "creation. Check CoinDCX for a stray order manually, then "
+                    "/stopgrid this grid and start a fresh one."
+                ),
+            )
+        return zombie_count

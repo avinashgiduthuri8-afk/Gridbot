@@ -22,6 +22,7 @@ LOG_CHANNELS = (
     "database",
     "grid",
     "errors",
+    "drive_backup",
 )
 
 _LOG_FORMAT = (

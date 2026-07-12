@@ -120,7 +120,7 @@ async def test_rejects_when_total_capital_exceeded(repos):
 @pytest.mark.anyio
 async def test_emergency_stop_blocks_new_grids(repos, risk_settings):
     manager = RiskManager(risk_settings, repos)
-    manager.trigger_emergency_stop()
+    await manager.trigger_emergency_stop()
     result = await manager.check_can_start_grid("BTCINR", 100, wallet_inr_balance=5000)
     assert not result.allowed
     assert manager.emergency_stopped
@@ -129,8 +129,38 @@ async def test_emergency_stop_blocks_new_grids(repos, risk_settings):
 @pytest.mark.anyio
 async def test_clear_emergency_stop(repos, risk_settings):
     manager = RiskManager(risk_settings, repos)
-    manager.trigger_emergency_stop()
-    manager.clear_emergency_stop()
+    await manager.trigger_emergency_stop()
+    await manager.clear_emergency_stop()
     assert not manager.emergency_stopped
-    result = await manager.check_can_start_grid("BTCINR", 100, wallet_inr_balance=5000)
+
+
+@pytest.mark.anyio
+async def test_emergency_stop_survives_restart(repos, risk_settings):
+    """A restart must not silently re-enable trading after an emergency stop.
+
+    Regression test for the bug where RiskManager._emergency_stop was
+    in-memory only: a fresh RiskManager instance sharing the same repos
+    (simulating a process restart against the same DB) must come back up
+    still stopped until load_emergency_stop() is called, and must reflect
+    False if it was never triggered.
+    """
+    manager = RiskManager(risk_settings, repos)
+    await manager.trigger_emergency_stop()
+
+    # Simulate a restart: a brand-new RiskManager instance, same repos/DB.
+    restarted_manager = RiskManager(risk_settings, repos)
+    assert not restarted_manager.emergency_stopped, "fresh instance defaults to False before loading"
+    await restarted_manager.load_emergency_stop()
+    assert restarted_manager.emergency_stopped, "emergency stop must be restored from persisted state"
+
+    # And clearing it persists too.
+    await restarted_manager.clear_emergency_stop()
+    another_restart = RiskManager(risk_settings, repos)
+    await another_restart.load_emergency_stop()
+    assert not another_restart.emergency_stopped
+    # Use the instance that actually reloaded the cleared state — `manager`
+    # itself never had clear_emergency_stop() called on it, so its own
+    # in-memory flag is still stale (this mirrors real usage: each process
+    # holds one long-lived RiskManager, so there's no cross-instance sync).
+    result = await another_restart.check_can_start_grid("BTCINR", 100, wallet_inr_balance=5000)
     assert result.allowed

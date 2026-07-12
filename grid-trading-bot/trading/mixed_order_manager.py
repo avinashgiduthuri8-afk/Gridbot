@@ -70,6 +70,7 @@ class MixedOrderManager:
         price: float,
         quantity: float,
         order_type: str = "market_order",
+        mode: str = "real",
     ) -> OrderRecord:
         manager = await self._manager_for_grid(grid_id)
         return await manager.place_dca_order(
@@ -79,6 +80,7 @@ class MixedOrderManager:
             price=price,
             quantity=quantity,
             order_type=order_type,
+            mode=mode,
         )
 
     async def cancel_order(self, order_id: str) -> bool:
@@ -88,3 +90,13 @@ class MixedOrderManager:
     async def sync_order_status(self, order_id: str) -> OrderRecord | None:
         manager = await self._manager_for_order(order_id)
         return await manager.sync_order_status(order_id)
+
+    async def resolve_uncertain_submitted(self, order_id: str) -> bool:
+        """Proxy to the correct real/paper OrderManager, mirroring cancel_order
+        and sync_order_status above. Without this, OrderMonitor's periodic
+        exchange-sync cycle raises AttributeError the first time it encounters
+        a SUBMITTED order with no exchange_order_id, since OrderManager grew
+        this method but this wrapper was not updated to match.
+        """
+        manager = await self._manager_for_order(order_id)
+        return await manager.resolve_uncertain_submitted(order_id)

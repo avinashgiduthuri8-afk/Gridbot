@@ -32,7 +32,9 @@ log = get_logger("telegram")
 HELP_TEXT = (
     "<b>Manual DCA Grid Trading Bot</b>\n\n"
     "<b>Grid control</b>\n"
-    "/newgrid — start a new DCA grid (guided 10-step setup, choose paper or real)\n"
+    "/newgrid — start a new DCA grid; choose <b>Default Grid</b> (just pick a "
+    "coin, uses your saved defaults) or <b>Custom Grid</b> (full 9-step setup)\n"
+    "/defaults — view or edit your saved Default Grid settings\n"
     "/stopgrid &lt;grid_id&gt; — stop a running grid\n"
     "/pause &lt;grid_id&gt; — pause a grid\n"
     "/resume &lt;grid_id&gt; — resume a paused grid\n\n"
@@ -149,10 +151,22 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
 
     @authorized
     async def history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        from config.constants import SYMBOL_PATTERN
+
         if not context.args:
             await update.message.reply_text("Usage: /history <symbol>\nExample: /history BTCINR")
             return
         symbol = context.args[0].upper()
+        if not SYMBOL_PATTERN.match(symbol):
+            # Reject before it's ever interpolated into an HTML-formatted
+            # reply — unlike /alert, this command has no exchange lookup
+            # gating it, so a malformed symbol would otherwise reach
+            # format_trade_history() unfiltered and could break Telegram's
+            # HTML entity parsing for this reply.
+            await update.message.reply_text(
+                "Symbol must be letters/numbers only. Example: /history BTCINR"
+            )
+            return
         trades = await app_context.repos.trade_history.list_for_symbol(symbol, limit=20)
         await update.message.reply_text(format_trade_history(symbol, trades), parse_mode="HTML")
 
@@ -219,9 +233,16 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
             )
             return
 
+        from config.constants import SYMBOL_PATTERN
+
         symbol = context.args[0].strip().upper()
         if not symbol.endswith("INR"):
             symbol = symbol + "INR"
+        if not SYMBOL_PATTERN.match(symbol):
+            await update.message.reply_text(
+                "Symbol must be letters/numbers only. Example: /coininfo BNBINR"
+            )
+            return
 
         await update.message.reply_text(f"⏳ Looking up <b>{symbol}</b>…", parse_mode="HTML")
 
@@ -429,6 +450,97 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
     # ------------------------------------------------------------------
 
     @authorized
+    async def defaults_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        from config.constants import QUICK_GRID_DEFAULTS_SEED
+
+        editable_fields = {
+            "base_investment": ("Base investment", float, "₹{:,.2f}"),
+            "dip_buy_amount": ("Dip buy amount", float, "₹{:,.2f}"),
+            "dip_percentage": ("Dip percentage", float, "{}%"),
+            "profit_sell_amount": ("Profit sell amount", float, "₹{:,.2f}"),
+            "profit_percentage": ("Profit percentage", float, "{}%"),
+            "max_levels": ("Max grid levels", int, "{}"),
+            "stop_loss_percentage": ("Stop loss", float, "{}%"),
+        }
+
+        if not context.args:
+            d = await app_context.repos.grid_defaults.get_or_seed(QUICK_GRID_DEFAULTS_SEED)
+            mode_label = (
+                "🟢 Paper" if d.get("last_mode") == "paper"
+                else "🔴 Real" if d.get("last_mode") == "real"
+                else "Not set — will be asked each time"
+            )
+            lines = ["<b>⚙️ Default Grid Settings</b>\n"]
+            for field, (label, _cast, fmt) in editable_fields.items():
+                lines.append(f"{label}: <b>{fmt.format(d[field])}</b>")
+            lines.append(f"Trade mode: <b>{mode_label}</b>")
+            lines.append(
+                "\nTo edit: <code>/defaults set &lt;field&gt; &lt;value&gt;</code>\n"
+                "Fields: " + ", ".join(editable_fields.keys()) + ", last_mode\n\n"
+                "Example: <code>/defaults set base_investment 750</code>\n"
+                "Example: <code>/defaults set last_mode paper</code> "
+                "(or <code>ask</code> to be prompted every time)"
+            )
+            await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+            return
+
+        if len(context.args) < 1 or context.args[0].lower() != "set":
+            await update.message.reply_text(
+                "Usage: /defaults\nOr: /defaults set <field> <value>"
+            )
+            return
+        if len(context.args) != 3:
+            await update.message.reply_text(
+                "Usage: /defaults set <field> <value>\n"
+                "Example: /defaults set base_investment 750"
+            )
+            return
+
+        _, field, raw_value = context.args
+        field = field.lower()
+
+        if field == "last_mode":
+            value = raw_value.lower()
+            if value == "ask":
+                value = None
+            elif value not in ("paper", "real"):
+                await update.message.reply_text(
+                    "last_mode must be 'paper', 'real', or 'ask'."
+                )
+                return
+            await app_context.repos.grid_defaults.get_or_seed(QUICK_GRID_DEFAULTS_SEED)
+            await app_context.repos.grid_defaults.update(last_mode=value)
+            shown = value or "ask (prompted each time)"
+            await update.message.reply_text(f"✅ Default trade mode set to: {shown}")
+            return
+
+        if field not in editable_fields:
+            await update.message.reply_text(
+                f"Unknown field '{field}'. Valid fields: "
+                + ", ".join(editable_fields.keys()) + ", last_mode"
+            )
+            return
+
+        label, cast, fmt = editable_fields[field]
+        try:
+            value = cast(raw_value.replace(",", "").replace("%", ""))
+            if value <= 0:
+                raise ValueError
+            if field == "max_levels" and value > 50:
+                raise ValueError
+            if field in ("dip_percentage", "profit_percentage", "stop_loss_percentage") and not (0 < value < 100):
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text(f"Invalid value for {label}: {raw_value}")
+            return
+
+        await app_context.repos.grid_defaults.get_or_seed(QUICK_GRID_DEFAULTS_SEED)
+        updated = await app_context.repos.grid_defaults.update(**{field: value})
+        await update.message.reply_text(
+            f"✅ {label} updated to: {fmt.format(updated[field])}"
+        )
+
+    @authorized
     async def alert_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if len(context.args) != 2:
             await update.message.reply_text("Usage: /alert <symbol> <price>\nExample: /alert BTCINR 6500000")
@@ -497,7 +609,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
                 "🚨 Emergency stop is already active.\nUse /clearemergency to re-enable trading."
             )
             return
-        app_context.risk_manager.trigger_emergency_stop()
+        await app_context.risk_manager.trigger_emergency_stop()
         log.warning("Emergency stop triggered by user %s", update.effective_user.id)
         await update.message.reply_text(
             "🚨 <b>EMERGENCY STOP ACTIVATED</b>\n\n"
@@ -534,7 +646,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
         await query.answer()
         action = query.data.split(":")[1]
         if action == "clear":
-            app_context.risk_manager.clear_emergency_stop()
+            await app_context.risk_manager.clear_emergency_stop()
             log.info("Emergency stop cleared by user %s", query.from_user.id)
             await query.edit_message_text(
                 "✅ Emergency stop cleared. Trading is re-enabled.\n\n"
@@ -584,6 +696,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
     app.add_handler(CommandHandler("export", export_cmd))
     app.add_handler(CommandHandler("backup", backup_cmd))
     app.add_handler(CommandHandler("logs", logs_cmd))
+    app.add_handler(CommandHandler("defaults", defaults_cmd))
     app.add_handler(CommandHandler("stopgrid", stopgrid_cmd))
     app.add_handler(CommandHandler("pause", pause_cmd))
     app.add_handler(CommandHandler("resume", resume_cmd))
