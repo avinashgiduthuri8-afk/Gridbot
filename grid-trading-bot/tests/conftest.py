@@ -198,6 +198,9 @@ class MockNotifier:
     async def grid_completed(self, symbol: str, grid_id: str, cycles: int, total_profit: float) -> None:
         self._record("grid_completed", symbol, grid_id, cycles, total_profit)
 
+    async def trailing_activated(self, **kwargs) -> None:
+        self._record("trailing_activated", **kwargs)
+
     async def dip_buy_executed(self, **kwargs) -> None:
         self._record("dip_buy_executed", **kwargs)
 
@@ -239,6 +242,18 @@ class MockNotifier:
     async def orphan_orders_detected(self, orphans: list) -> None:
         self._record("orphan_orders_detected", orphans)
 
+    async def grid_deleted(self, symbol: str, grid_id: str) -> None:
+        self._record("grid_deleted", symbol, grid_id)
+
+    async def emergency_cleared(self) -> None:
+        self._record("emergency_cleared")
+
+    async def drive_backup_completed(self, file_id: str) -> None:
+        self._record("drive_backup_completed", file_id)
+
+    async def drive_backup_failed(self, reason: str) -> None:
+        self._record("drive_backup_failed", reason)
+
     async def error(self, context: str, message: str) -> None:
         self._record("error", context, message)
 
@@ -273,4 +288,44 @@ def permissive_risk_settings():
         max_simultaneous_grids=20,
         min_wallet_balance=0,
         daily_loss_limit=500_000,
+    )
+
+
+@pytest.fixture
+async def app_context(repos, mock_exchange, mock_notifier, permissive_risk_settings):
+    """A real BotAppContext wired with real DCAManager/RiskManager/OrderManager
+    over a real in-memory DB, for testing Telegram handlers and conversations
+    against actual business logic rather than mocked-out responses.
+    """
+    from bot_telegram.bot import BotAppContext
+    from config.settings import BackupSettings, Settings
+    from risk.risk_manager import RiskManager
+    from trading.dca_manager import DCAManager
+    from trading.mixed_order_manager import MixedOrderManager
+    from trading.order_manager import OrderManager
+
+    risk = RiskManager(permissive_risk_settings, repos)
+    await risk.load_emergency_stop()
+    real_om = OrderManager(mock_exchange, repos)
+    paper_om = OrderManager(mock_exchange, repos)
+    mixed_om = MixedOrderManager(real=real_om, paper=paper_om, repos=repos)
+    dca_manager = DCAManager(
+        exchange=mock_exchange, repos=repos, order_manager=mixed_om,
+        notifier=mock_notifier, risk=risk,
+    )
+    backup_settings = BackupSettings(
+        enabled=False, folder_id="", service_account_json_path="",
+        interval_hours=6, retention_count=14,
+    )
+    settings = Settings(
+        telegram_bot_token="test-token", telegram_owner_id=111, telegram_allowed_ids=(222,),
+        coindcx_api_key="k", coindcx_api_secret="s", coindcx_base_url="https://example.invalid",
+        database_path=":memory:", log_dir="/tmp/logs", log_level="INFO",
+        risk=permissive_risk_settings, order_poll_interval_seconds=5,
+        price_poll_interval_seconds=5, daily_summary_interval_seconds=3600,
+        backup=backup_settings,
+    )
+    return BotAppContext(
+        settings=settings, repos=repos, exchange=mock_exchange, dca_manager=dca_manager,
+        risk_manager=risk, notifier=mock_notifier, alert_manager=None, price_monitor=None,
     )

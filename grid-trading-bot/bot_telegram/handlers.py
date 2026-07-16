@@ -23,7 +23,12 @@ from bot_telegram.formatters import (
     format_wallet_balance,
 )
 from exchange.exceptions import ExchangeAuthError, ExchangeError
-from bot_telegram.keyboards import clear_emergency_keyboard, grid_action_keyboard, main_menu_keyboard
+from bot_telegram.keyboards import (
+    clear_emergency_keyboard,
+    grid_action_keyboard,
+    main_menu_keyboard,
+    manual_trade_confirm_keyboard,
+)
 from utils.helpers import now_iso
 from utils.logger import get_logger
 
@@ -33,11 +38,18 @@ HELP_TEXT = (
     "<b>Manual DCA Grid Trading Bot</b>\n\n"
     "<b>Grid control</b>\n"
     "/newgrid — start a new DCA grid; choose <b>Default Grid</b> (just pick a "
-    "coin, uses your saved defaults) or <b>Custom Grid</b> (full 9-step setup)\n"
+    "coin, uses your saved defaults) or <b>Custom Grid</b> (full 11-step setup)\n"
     "/defaults — view or edit your saved Default Grid settings\n"
     "/stopgrid &lt;grid_id&gt; — stop a running grid\n"
     "/pause &lt;grid_id&gt; — pause a grid\n"
-    "/resume &lt;grid_id&gt; — resume a paused grid\n\n"
+    "/resume &lt;grid_id&gt; — resume a paused grid\n"
+    "/manualbuy &lt;grid_id&gt; &lt;inr_amount&gt; — place an extra buy right now, "
+    "outside the automatic dip-buy ladder (asks for confirmation, same risk checks apply)\n"
+    "/manualsell &lt;grid_id&gt; [inr_amount] — sell part or all of a position right "
+    "now, regardless of current profit (asks for confirmation; omit the amount to sell everything)\n"
+    "/adjustgrid &lt;grid_id&gt; &lt;field&gt; &lt;value&gt; — change one setting on a "
+    "running grid without stopping it (dip/profit amounts and percentages, max "
+    "levels, stop loss, trailing take-profit)\n\n"
     "<b>Monitoring</b>\n"
     "/status — bot overview and wallet balance\n"
     "/balance — full real wallet breakdown with asset market values and unrealized P&amp;L\n"
@@ -390,10 +402,19 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
 
     @authorized
     async def stopgrid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        from config.constants import GRID_ID_PATTERN
+
         if not context.args:
             await update.message.reply_text("Usage: /stopgrid <grid_id>")
             return
         grid_id = context.args[0]
+        if not GRID_ID_PATTERN.match(grid_id):
+            # Reject before it's ever echoed into an HTML-formatted reply —
+            # same class of gap fixed for coin symbols in /history/coininfo.
+            await update.message.reply_text(
+                "That doesn't look like a valid grid ID. Use /grids to see all grid IDs."
+            )
+            return
         grid = await app_context.repos.grids.get(grid_id)
         if not grid:
             await update.message.reply_text(
@@ -409,10 +430,17 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
 
     @authorized
     async def pause_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        from config.constants import GRID_ID_PATTERN
+
         if not context.args:
             await update.message.reply_text("Usage: /pause <grid_id>")
             return
         grid_id = context.args[0]
+        if not GRID_ID_PATTERN.match(grid_id):
+            await update.message.reply_text(
+                "That doesn't look like a valid grid ID. Use /grids to see all grid IDs."
+            )
+            return
         grid = await app_context.repos.grids.get(grid_id)
         if not grid:
             await update.message.reply_text(
@@ -428,10 +456,17 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
 
     @authorized
     async def resume_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        from config.constants import GRID_ID_PATTERN
+
         if not context.args:
             await update.message.reply_text("Usage: /resume <grid_id>")
             return
         grid_id = context.args[0]
+        if not GRID_ID_PATTERN.match(grid_id):
+            await update.message.reply_text(
+                "That doesn't look like a valid grid ID. Use /grids to see all grid IDs."
+            )
+            return
         grid = await app_context.repos.grids.get(grid_id)
         if not grid:
             await update.message.reply_text(
@@ -444,6 +479,253 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
             await update.message.reply_text(f"▶️ Grid <code>{grid_id}</code> resumed.", parse_mode="HTML")
         except ValueError as exc:
             await update.message.reply_text(f"Error: {exc}")
+
+    # ------------------------------------------------------------------
+    # Manual Buy/Sell
+    # ------------------------------------------------------------------
+
+    @authorized
+    async def manualbuy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        from config.constants import GRID_ID_PATTERN
+
+        if len(context.args) != 2:
+            await update.message.reply_text(
+                "Usage: /manualbuy <grid_id> <inr_amount>\n"
+                "Example: /manualbuy grd_1234567890_abc123 500"
+            )
+            return
+        grid_id, raw_amount = context.args
+        if not GRID_ID_PATTERN.match(grid_id):
+            await update.message.reply_text(
+                "That doesn't look like a valid grid ID. Use /grids to see all grid IDs."
+            )
+            return
+        try:
+            amount = float(raw_amount.replace(",", ""))
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text(f"Invalid amount: {raw_amount}")
+            return
+
+        grid = await app_context.repos.grids.get(grid_id)
+        if not grid:
+            await update.message.reply_text(
+                f"❌ Grid <code>{grid_id}</code> not found. Use /grids to see all grid IDs.",
+                parse_mode="HTML",
+            )
+            return
+        if grid["status"] != "active":
+            await update.message.reply_text(
+                f"❌ Grid <code>{grid_id}</code> is {grid['status']}, not active — cannot buy.",
+                parse_mode="HTML",
+            )
+            return
+
+        try:
+            ticker = await app_context.exchange.get_ticker(grid["symbol"])
+            price_line = f"Current price: {ticker.last_price:,.2f}\n"
+        except Exception:  # noqa: BLE001
+            price_line = ""
+
+        await update.message.reply_text(
+            f"🟢 <b>Confirm Manual Buy</b>\n\n"
+            f"Grid: <code>{grid_id}</code> ({grid['symbol']})\n"
+            f"{price_line}"
+            f"Amount: ₹{amount:,.2f}\n\n"
+            "This goes through the same risk checks as an automatic dip-buy "
+            "(emergency stop / daily loss limit / capital caps all apply).",
+            parse_mode="HTML",
+            reply_markup=manual_trade_confirm_keyboard("buy", grid_id, amount),
+        )
+
+    @authorized
+    async def manualsell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        from config.constants import GRID_ID_PATTERN
+
+        if len(context.args) not in (1, 2):
+            await update.message.reply_text(
+                "Usage: /manualsell <grid_id> [inr_amount]\n"
+                "Omit the amount to sell the entire position.\n"
+                "Example: /manualsell grd_1234567890_abc123 300\n"
+                "Example: /manualsell grd_1234567890_abc123"
+            )
+            return
+        grid_id = context.args[0]
+        if not GRID_ID_PATTERN.match(grid_id):
+            await update.message.reply_text(
+                "That doesn't look like a valid grid ID. Use /grids to see all grid IDs."
+            )
+            return
+
+        amount: float | None = None
+        if len(context.args) == 2:
+            try:
+                amount = float(context.args[1].replace(",", ""))
+                if amount <= 0:
+                    raise ValueError
+            except ValueError:
+                await update.message.reply_text(f"Invalid amount: {context.args[1]}")
+                return
+
+        grid = await app_context.repos.grids.get(grid_id)
+        if not grid:
+            await update.message.reply_text(
+                f"❌ Grid <code>{grid_id}</code> not found. Use /grids to see all grid IDs.",
+                parse_mode="HTML",
+            )
+            return
+        if grid["status"] != "active":
+            await update.message.reply_text(
+                f"❌ Grid <code>{grid_id}</code> is {grid['status']}, not active — cannot sell.",
+                parse_mode="HTML",
+            )
+            return
+        if grid["total_quantity"] <= 0:
+            await update.message.reply_text(
+                f"❌ Grid <code>{grid_id}</code> has no open position to sell.",
+                parse_mode="HTML",
+            )
+            return
+
+        amount_label = f"₹{amount:,.2f}" if amount is not None else "the ENTIRE remaining position"
+        await update.message.reply_text(
+            f"🔴 <b>Confirm Manual Sell</b>\n\n"
+            f"Grid: <code>{grid_id}</code> ({grid['symbol']})\n"
+            f"Current position: {grid['total_quantity']:.8g} units\n"
+            f"Selling: {amount_label}\n\n"
+            "Manual sells are never blocked by emergency stop or risk limits "
+            "(reducing a position is always allowed).",
+            parse_mode="HTML",
+            reply_markup=manual_trade_confirm_keyboard("sell", grid_id, amount),
+        )
+
+    async def manual_trade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if not app_context.is_authorized(query.from_user.id):
+            await query.answer("Not authorized.", show_alert=True)
+            return
+        await query.answer()
+
+        from config.constants import GRID_ID_PATTERN
+
+        _, action, grid_id, amount_token = query.data.split(":", 3)
+
+        if action == "cancel":
+            await query.edit_message_text("❌ Manual trade cancelled.")
+            return
+
+        # Defense in depth: re-validate the grid_id shape even though it was
+        # already checked when the button was created — a stale/forwarded
+        # callback_data should never reach the DB layer unvalidated.
+        if not GRID_ID_PATTERN.match(grid_id):
+            await query.edit_message_text("Invalid grid reference — please try the command again.")
+            return
+
+        amount = None if amount_token == "ALL" else float(amount_token)
+
+        try:
+            if action == "buy":
+                order = await app_context.dca_manager.manual_buy(grid_id, amount)
+                await query.edit_message_text(
+                    f"✅ Manual buy placed: order <code>{order.order_id}</code>",
+                    parse_mode="HTML",
+                )
+            else:
+                order = await app_context.dca_manager.manual_sell(grid_id, amount)
+                await query.edit_message_text(
+                    f"✅ Manual sell placed: order <code>{order.order_id}</code>",
+                    parse_mode="HTML",
+                )
+        except ValueError as exc:
+            await query.edit_message_text(f"❌ {exc}")
+
+    @authorized
+    async def adjustgrid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        from config.constants import GRID_ID_PATTERN
+
+        adjustable_fields = {
+            "dip_buy_amount": ("Dip buy amount", float, "₹{:,.2f}"),
+            "dip_percentage": ("Dip percentage", float, "{}%"),
+            "profit_sell_amount": ("Profit sell amount", float, "₹{:,.2f}"),
+            "profit_percentage": ("Profit percentage", float, "{}%"),
+            "max_levels": ("Max grid levels", int, "{}"),
+            "stop_loss_percentage": ("Stop loss", float, "{}%"),
+            "trailing_enabled": ("Trailing take-profit", None, "{}"),
+            "trailing_percentage": ("Trailing percentage", float, "{}%"),
+        }
+
+        if len(context.args) != 3:
+            await update.message.reply_text(
+                "Usage: /adjustgrid <grid_id> <field> <value>\n"
+                "Fields: " + ", ".join(adjustable_fields.keys()) + "\n\n"
+                "Example: /adjustgrid grd_1234567890_abc123 dip_percentage 6\n"
+                "Example: /adjustgrid grd_1234567890_abc123 trailing_enabled true"
+            )
+            return
+
+        grid_id, field, raw_value = context.args
+        field = field.lower()
+
+        if not GRID_ID_PATTERN.match(grid_id):
+            await update.message.reply_text(
+                "That doesn't look like a valid grid ID. Use /grids to see all grid IDs."
+            )
+            return
+        if field not in adjustable_fields:
+            await update.message.reply_text(
+                f"Unknown field '{field}'. Valid fields: " + ", ".join(adjustable_fields.keys())
+            )
+            return
+
+        label, cast, fmt = adjustable_fields[field]
+
+        if field == "trailing_enabled":
+            value_str = raw_value.lower()
+            if value_str in ("true", "yes", "on", "1"):
+                value = True
+            elif value_str in ("false", "no", "off", "0"):
+                value = False
+            else:
+                await update.message.reply_text(
+                    "trailing_enabled must be true/false (or yes/no, on/off)."
+                )
+                return
+        else:
+            try:
+                value = cast(raw_value.replace(",", "").replace("%", ""))
+                if value <= 0:
+                    raise ValueError
+                if field == "max_levels" and value > 50:
+                    raise ValueError
+                if field in (
+                    "dip_percentage", "profit_percentage",
+                    "stop_loss_percentage", "trailing_percentage",
+                ) and not (0 < value < 100):
+                    raise ValueError
+            except ValueError:
+                await update.message.reply_text(f"Invalid value for {label}: {raw_value}")
+                return
+
+        try:
+            updated_grid = await app_context.dca_manager.adjust_grid(grid_id, field, value)
+        except ValueError as exc:
+            await update.message.reply_text(f"❌ {exc}")
+            return
+
+        shown = fmt.format(value) if fmt != "{}" or field != "trailing_enabled" else str(value)
+        extra_note = ""
+        if field == "dip_percentage":
+            extra_note = f"\nNext dip-buy price updated to ₹{updated_grid['next_buy_price']:,.2f}."
+        elif field == "profit_percentage":
+            extra_note = f"\nNext profit-sell price updated to ₹{updated_grid['next_sell_price']:,.2f}."
+        elif field == "max_levels" and updated_grid["current_level"] >= value:
+            extra_note = "\n⚠️ Current level already meets or exceeds this — no further dip buys will occur."
+
+        await update.message.reply_text(
+            f"✅ Grid <code>{grid_id}</code>: {label} updated to {shown}.{extra_note}",
+            parse_mode="HTML",
+        )
 
     # ------------------------------------------------------------------
     # Price alerts
@@ -700,6 +982,9 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
     app.add_handler(CommandHandler("stopgrid", stopgrid_cmd))
     app.add_handler(CommandHandler("pause", pause_cmd))
     app.add_handler(CommandHandler("resume", resume_cmd))
+    app.add_handler(CommandHandler("manualbuy", manualbuy_cmd))
+    app.add_handler(CommandHandler("manualsell", manualsell_cmd))
+    app.add_handler(CommandHandler("adjustgrid", adjustgrid_cmd))
     app.add_handler(CommandHandler("alert", alert_cmd))
     app.add_handler(CommandHandler("alerts", alerts_cmd))
     app.add_handler(CommandHandler("delalert", delalert_cmd))
@@ -707,3 +992,4 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
     app.add_handler(CommandHandler("clearemergency", clearemergency_cmd))
     app.add_handler(CallbackQueryHandler(emergency_callback, pattern="^emergency:"))
     app.add_handler(CallbackQueryHandler(grid_action_callback, pattern="^grid_action:"))
+    app.add_handler(CallbackQueryHandler(manual_trade_callback, pattern="^mtrade:"))

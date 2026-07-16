@@ -28,6 +28,15 @@ def grid_mode_choice_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def trailing_choice_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("✅ Enable trailing", callback_data="trailing_choice:yes")],
+            [InlineKeyboardButton("Skip — fixed profit target", callback_data="trailing_choice:no")],
+        ]
+    )
+
+
 def confirm_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
@@ -67,12 +76,48 @@ def clear_emergency_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def manual_trade_confirm_keyboard(action: str, grid_id: str, amount_token: str) -> InlineKeyboardMarkup:
+    """action is 'buy' or 'sell'; amount_token is either a plain number
+    string or 'all' (sell-everything). Encoded directly in callback_data
+    since /buy and /sell are plain commands, not a ConversationHandler —
+    there's no persisted conversation state to stash this in between the
+    command and the confirmation button press.
+    """
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✅ Confirm", callback_data=f"mtrade:{action}:{grid_id}:{amount_token}"
+                ),
+                InlineKeyboardButton("❌ Cancel", callback_data="mtrade:cancel"),
+            ]
+        ]
+    )
+
+
 def trading_mode_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton("🟢 Paper Trade", callback_data="pick_mode:paper"),
                 InlineKeyboardButton("🔴 Real Trade", callback_data="pick_mode:real"),
+            ]
+        ]
+    )
+
+
+def manual_trade_confirm_keyboard(action: str, grid_id: str, amount: float | None) -> InlineKeyboardMarkup:
+    """action is 'buy' or 'sell'; amount=None means 'sell entire position'
+    (only valid for sell). Encoded compactly in callback_data since
+    Telegram caps it at 64 bytes: mtrade:<action>:<grid_id>:<amount|ALL>.
+    """
+    amount_token = "ALL" if amount is None else f"{amount:.2f}"
+    data = f"mtrade:{action}:{grid_id}:{amount_token}"
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ Confirm", callback_data=data),
+                InlineKeyboardButton("❌ Cancel", callback_data="mtrade:cancel:-:-"),
             ]
         ]
     )

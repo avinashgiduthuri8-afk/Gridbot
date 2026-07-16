@@ -1,0 +1,32 @@
+# Never bake secrets or local state into the image
+.env
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+logs/*.log
+logs/*.log.*
+*service-account*.json
+*serviceaccount*.json
+gdrive-*.json
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+
+# VCS / editor / OS cruft
+.git/
+.gitignore
+.github/
+.vscode/
+.idea/
+.DS_Store
+
+# Not needed inside the image
+README.md
+tests/
+scripts/

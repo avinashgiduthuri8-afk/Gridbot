@@ -200,6 +200,22 @@ class Notifier:
             f"Current price: {fmt_price(price)}"
         )
 
+    async def trailing_activated(
+        self, symbol: str, grid_id: str, peak_price: float, trailing_percentage: float,
+    ) -> None:
+        """Called by DCAManager the moment a profit target is reached on a
+        trailing-enabled grid, instead of selling immediately. Was
+        previously called with no matching method defined here at all —
+        would have raised AttributeError the first time any trailing grid
+        ever reached its profit target.
+        """
+        await self.send(
+            f"🎯 <b>Trailing Take-Profit Activated</b>\n"
+            f"Coin: <b>{symbol}</b> | Grid: <code>{grid_id}</code>\n"
+            f"Peak price: {fmt_price(peak_price)}\n"
+            f"Will sell if price pulls back {trailing_percentage}% from the peak."
+        )
+
     # ------------------------------------------------------------------
     # System events
     # ------------------------------------------------------------------

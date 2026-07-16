@@ -27,6 +27,7 @@ from bot_telegram.keyboards import (
     coin_selection_keyboard,
     confirm_keyboard,
     grid_mode_choice_keyboard,
+    trailing_choice_keyboard,
     trading_mode_keyboard,
 )
 from config.constants import (
@@ -53,9 +54,11 @@ log = get_logger("telegram")
     PROFIT_PERCENTAGE,
     MAX_LEVELS,
     STOP_LOSS,
+    TRAILING_CHOICE,
+    TRAILING_PERCENTAGE,
     SELECT_MODE,
     CONFIRM,
-) = range(14)
+) = range(16)
 
 
 def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHandler:  # noqa: F821
@@ -95,7 +98,7 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             context.user_data["_source"] = "custom"
             await query.edit_message_text(
                 "🚀 <b>New DCA Grid Setup (Custom)</b>\n\n"
-                "Step 1 of 9: Select a coin to trade, or type a custom symbol.",
+                "Step 1 of 11: Select a coin to trade, or type a custom symbol.",
                 parse_mode="HTML",
                 reply_markup=coin_selection_keyboard(),
             )
@@ -168,6 +171,10 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             "profit_percentage": defaults["profit_percentage"],
             "max_levels": defaults["max_levels"],
             "stop_loss_percentage": defaults["stop_loss_percentage"],
+            # Default Grid stays intentionally simple (per spec) — trailing
+            # take-profit is a Custom Grid-only opt-in for now.
+            "trailing_enabled": False,
+            "trailing_percentage": None,
         })
 
         saved_mode = defaults.get("last_mode")
@@ -209,7 +216,7 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
         context.user_data["symbol"] = coin
         await query.edit_message_text(
             f"✅ Coin: <b>{coin}</b>\n\n"
-            "Step 2 of 9: Enter the <b>entry price</b> in ₹.\n"
+            "Step 2 of 11: Enter the <b>entry price</b> in ₹.\n"
             "Type <code>0</code> or <code>market</code> to use the current market price.",
             parse_mode="HTML",
         )
@@ -251,7 +258,7 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
         context.user_data["symbol"] = symbol
         await update.message.reply_text(
             f"✅ Coin: <b>{symbol}</b>\n\n"
-            "Step 2 of 9: Enter the <b>entry price</b> in ₹.\n"
+            "Step 2 of 11: Enter the <b>entry price</b> in ₹.\n"
             "Type <code>0</code> or <code>market</code> to use the current market price.",
             parse_mode="HTML",
         )
@@ -280,7 +287,7 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
                 return ENTRY_PRICE
         await update.message.reply_text(
             f"✅ Entry price: <b>{price_label}</b>\n\n"
-            "Step 3 of 9: Enter the <b>base investment</b> (INR) — "
+            "Step 3 of 11: Enter the <b>base investment</b> (INR) — "
             "the amount used for the <i>first</i> buy only.\n"
             "Example: <code>500</code>",
             parse_mode="HTML",
@@ -302,7 +309,7 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             return BASE_INVESTMENT
         await update.message.reply_text(
             f"✅ Base investment: <b>₹{amount:,.2f}</b>\n\n"
-            "Step 4 of 9: Enter the <b>dip buy amount</b> (INR) — "
+            "Step 4 of 11: Enter the <b>dip buy amount</b> (INR) — "
             "used for every additional buy after a dip.\n"
             "Example: <code>100</code>",
             parse_mode="HTML",
@@ -324,7 +331,7 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             return DIP_BUY_AMOUNT
         await update.message.reply_text(
             f"✅ Dip buy amount: <b>₹{amount:,.2f}</b>\n\n"
-            "Step 5 of 9: Enter the <b>dip percentage</b> — how far the price must "
+            "Step 5 of 11: Enter the <b>dip percentage</b> — how far the price must "
             "fall from the previous buy before triggering the next buy.\n"
             f"Example: <code>{DEFAULT_DIP_PERCENTAGE}</code> (means 5%)",
             parse_mode="HTML",
@@ -346,7 +353,7 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             return DIP_PERCENTAGE
         await update.message.reply_text(
             f"✅ Dip %: <b>{pct}%</b>\n\n"
-            "Step 6 of 9: Enter the <b>profit sell amount</b> (INR) — "
+            "Step 6 of 11: Enter the <b>profit sell amount</b> (INR) — "
             "how much to sell each time the profit target is hit.\n"
             "Example: <code>150</code>",
             parse_mode="HTML",
@@ -368,7 +375,7 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             return PROFIT_SELL_AMOUNT
         await update.message.reply_text(
             f"✅ Profit sell amount: <b>₹{amount:,.2f}</b>\n\n"
-            "Step 7 of 9: Enter the <b>profit percentage</b> — "
+            "Step 7 of 11: Enter the <b>profit percentage</b> — "
             "sell when the price reaches (average entry + this %).\n"
             f"Example: <code>{DEFAULT_PROFIT_PERCENTAGE}</code> (means 7%)",
             parse_mode="HTML",
@@ -390,7 +397,7 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             return PROFIT_PERCENTAGE
         await update.message.reply_text(
             f"✅ Profit %: <b>{pct}%</b>\n\n"
-            "Step 8 of 9: Enter the <b>maximum grid levels</b> — "
+            "Step 8 of 11: Enter the <b>maximum grid levels</b> — "
             "the bot will not buy more than this many times.\n"
             f"Example: <code>{DEFAULT_MAX_LEVELS}</code>",
             parse_mode="HTML",
@@ -412,7 +419,7 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             return MAX_LEVELS
         await update.message.reply_text(
             f"✅ Max levels: <b>{levels}</b>\n\n"
-            "Step 9 of 9: Enter the <b>stop loss percentage</b> — "
+            "Step 9 of 11: Enter the <b>stop loss percentage</b> — "
             "close the position if the price falls this far below the average entry.\n"
             f"Example: <code>{DEFAULT_STOP_LOSS_PERCENTAGE}</code> (means 50%)",
             parse_mode="HTML",
@@ -436,7 +443,62 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             return STOP_LOSS
 
         await update.message.reply_text(
-            "Step 10 of 10: Choose your <b>trading mode</b>.\n\n"
+            "Step 10 of 11: <b>Trailing take-profit</b> (optional)\n\n"
+            "Instead of selling a fixed amount the instant your profit target "
+            "is hit, trailing keeps tracking the price upward and only sells "
+            "once it pulls back a set % from the highest point reached — "
+            "captures more of a strong upward move.\n\n"
+            "Skip this to use your fixed profit percentage as-is.",
+            parse_mode="HTML",
+            reply_markup=trailing_choice_keyboard(),
+        )
+        return TRAILING_CHOICE
+
+    # ------------------------------------------------------------------
+    # Step 10 — trailing take-profit (optional)
+    # ------------------------------------------------------------------
+
+    async def trailing_choice_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        query = update.callback_query
+        await query.answer()
+        _, choice = query.data.split(":", 1)
+
+        if choice == "no":
+            context.user_data["trailing_enabled"] = False
+            context.user_data["trailing_percentage"] = None
+            await query.edit_message_text(
+                "Step 11 of 11: Choose your <b>trading mode</b>.\n\n"
+                "🟢 <b>Paper Trade</b> — simulate orders with no real money. "
+                "Great for testing your strategy safely.\n\n"
+                "🔴 <b>Real Trade</b> — execute actual orders on CoinDCX.",
+                parse_mode="HTML",
+                reply_markup=trading_mode_keyboard(),
+            )
+            return SELECT_MODE
+
+        await query.edit_message_text(
+            "Enter the trailing pullback percentage (1-50).\n"
+            "Example: <code>2</code> means sell once price drops 2% from its peak "
+            "after your profit target was first reached.",
+            parse_mode="HTML",
+        )
+        return TRAILING_PERCENTAGE
+
+    async def trailing_percentage_entered(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        try:
+            pct = float(update.message.text.strip().replace("%", ""))
+            if not (0 < pct <= 50):
+                raise ValueError
+            context.user_data["trailing_enabled"] = True
+            context.user_data["trailing_percentage"] = pct
+        except ValueError:
+            await update.message.reply_text(
+                "Please enter a trailing percentage between 0 and 50. Example: 2"
+            )
+            return TRAILING_PERCENTAGE
+
+        await update.message.reply_text(
+            "Step 11 of 11: Choose your <b>trading mode</b>.\n\n"
             "🟢 <b>Paper Trade</b> — simulate orders with no real money. "
             "Great for testing your strategy safely.\n\n"
             "🔴 <b>Real Trade</b> — execute actual orders on CoinDCX.",
@@ -457,6 +519,10 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
         mode_label = "🟢 Paper Trade" if d.get("mode") == "paper" else "🔴 Real Trade"
         price_label = f"₹{d['entry_price']:,.2f}" if d["entry_price"] > 0 else "market price"
         total_possible = d["base_investment"] + d["dip_buy_amount"] * (d["max_levels"] - 1)
+        trailing_line = (
+            f"Trailing take-profit: {d['trailing_percentage']}% pullback\n"
+            if d.get("trailing_enabled") else ""
+        )
         return (
             "<b>📋 DCA Grid Summary</b>\n\n"
             f"Coin: <b>{d['symbol']}</b>\n"
@@ -469,6 +535,7 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             f"─────────────────────\n"
             f"Profit sell amount: ₹{d['profit_sell_amount']:,.2f}\n"
             f"Profit percentage:  {d['profit_percentage']}%\n"
+            f"{trailing_line}"
             f"─────────────────────\n"
             f"Max grid levels:    {d['max_levels']}\n"
             f"Stop loss:          {d['stop_loss_percentage']}%\n"
@@ -623,6 +690,8 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             PROFIT_PERCENTAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, profit_percentage_entered)],
             MAX_LEVELS: [MessageHandler(filters.TEXT & ~filters.COMMAND, max_levels_entered)],
             STOP_LOSS: [MessageHandler(filters.TEXT & ~filters.COMMAND, stop_loss_entered)],
+            TRAILING_CHOICE: [CallbackQueryHandler(trailing_choice_selected, pattern="^trailing_choice:")],
+            TRAILING_PERCENTAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, trailing_percentage_entered)],
             SELECT_MODE: [CallbackQueryHandler(mode_selected, pattern="^pick_mode:")],
             CONFIRM: [CallbackQueryHandler(confirm, pattern="^confirm_grid:")],
         },

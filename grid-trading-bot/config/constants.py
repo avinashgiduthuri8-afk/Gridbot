@@ -44,6 +44,11 @@ QUOTE_CURRENCY = "INR"
 # HTML entity parsing (the bot's own "Checking <b>{symbol}</b>…" message
 # would fail to send) well before exchange-side pair validation ever runs.
 SYMBOL_PATTERN = re.compile(r"^[A-Z0-9]+INR$")
+
+# Matches new_id()'s output format exactly: "<prefix>_<13-digit-ms>_<6hex>".
+# Used the same way as SYMBOL_PATTERN — reject a malformed grid_id before
+# it's ever echoed into a parse_mode="HTML" "not found" reply.
+GRID_ID_PATTERN = re.compile(r"^grd_[0-9]{10,16}_[0-9a-f]{6}$")
 TELEGRAM_MAX_MESSAGE_LENGTH = 4000
 
 DEFAULT_DIP_PERCENTAGE = 5.0

@@ -12,15 +12,27 @@ bot only manages the position's order lifecycle.
   coin (e.g. `BTCINR`), an entry price (or use the live market price), a base
   investment amount, a dip-buy amount and trigger percentage, a profit-sell
   amount and trigger percentage, a maximum number of DCA levels, a stop-loss
-  percentage, and a mode (**paper** or **real**).
+  percentage, an optional trailing take-profit, and a mode (**paper** or
+  **real**).
 - The bot places an initial buy, then averages down with further buys each
   time price drops by the configured dip percentage, and sells a configured
   portion each time price rises by the configured profit percentage off the
   *average* entry price. A stop-loss closes the entire position if price
   falls too far below the average entry.
+- **Trailing take-profit** (optional, Custom Grid only): instead of selling
+  the instant your profit target is hit, the bot keeps tracking the price
+  upward and only sells once it pulls back a configured % from the highest
+  point reached since the target was hit — captures more of a strong
+  upward move instead of selling at the very first profit tick.
 - **Paper mode** simulates order placement (no real money, no real exchange
   orders) while still using live market prices — useful for testing a
-  configuration before running it for real.
+  configuration before running it for real. The simulation isn't an
+  instant-fill toy: it models slippage (fills nudged slightly against you,
+  like a real market order), latency (an order stays open for a random
+  delay before it can fill, instead of filling the instant it's checked),
+  and occasional partial fills — all tunable via `PAPER_SLIPPAGE_BPS_MAX`,
+  `PAPER_LATENCY_MIN_SECONDS`/`PAPER_LATENCY_MAX_SECONDS`, and
+  `PAPER_PARTIAL_FILL_PROBABILITY` in `.env`.
 - You can run multiple DCA positions ("grids") simultaneously (e.g. one for
   BTCINR, one for ETHINR), each with its own configuration and mode.
 - All state (grids, orders, trade history, price alerts) is persisted in
@@ -147,6 +159,47 @@ Replit:
    workflow as a **Reserved VM deployment** (Background Worker) rather
    than relying on the development workspace alone.
 
+## Running with Docker
+
+A `Dockerfile` and `docker-compose.yml` are included for VPS or any other
+Docker-capable host.
+
+```bash
+cp .env.example .env   # then fill in your real credentials
+docker compose up --build -d
+docker compose logs -f   # follow logs
+```
+
+Notes:
+- The SQLite database (`./data`) and log files (`./logs`) are bind-mounted
+  from the host, not baked into the image — this is what makes grid state
+  survive `docker compose up --build` (a rebuild/redeploy), per the
+  "Persistent database across redeploys" section above. Deleting `./data`
+  on the host deletes your grid history; back it up the same way regardless
+  of how you're running the bot.
+- The container runs as a non-root user (uid 1000), not root. If
+  `docker compose up` ever fails with a permission error writing to
+  `./data` or `./logs`, it's almost always because those host directories
+  already exist owned by a different user (e.g. created earlier by a
+  root-run container, or by `sudo`). Fix it once with:
+  ```bash
+  mkdir -p data logs
+  sudo chown -R 1000:1000 data logs
+  ```
+- If you enable Google Drive backup, mount your service-account key file
+  read-only — uncomment and adjust the relevant line in
+  `docker-compose.yml` — and point `GDRIVE_SERVICE_ACCOUNT_JSON` in `.env`
+  at wherever you mounted it *inside* the container (e.g.
+  `/app/gdrive-key.json`), not its path on the host.
+- No ports are published; this bot never listens for inbound connections
+  (Telegram uses long-polling, not webhooks, in this codebase).
+
+## Continuous Integration
+
+`.github/workflows/ci.yml` runs on every push and pull request: a fast
+compile-check across every module, the full `pytest` suite, and a Docker
+build to catch a broken `Dockerfile` before it reaches a real deployment.
+
 ## Command reference
 
 **Grid control**
@@ -156,7 +209,8 @@ Replit:
     levels, stop loss, and last-used trading mode)
   - **2️⃣ Custom Grid** — the full guided setup (pick coin, entry price, base
     investment, dip-buy amount/percentage, profit-sell amount/percentage, max
-    levels, stop-loss percentage, and paper/real mode)
+    levels, stop-loss percentage, optional trailing take-profit, and
+    paper/real mode)
 - `/defaults` — view your saved Default Grid settings, or edit one with
   `/defaults set <field> <value>` (e.g. `/defaults set base_investment 750`,
   or `/defaults set last_mode paper` / `ask`). Saved in SQLite, persists
@@ -164,6 +218,21 @@ Replit:
 - `/stopgrid <grid_id>` — stop a running grid and cancel its resting orders
 - `/pause <grid_id>` — pause a grid (cancels resting orders, keeps config)
 - `/resume <grid_id>` — resume a paused grid
+- `/manualbuy <grid_id> <inr_amount>` — place an extra buy right now, outside
+  the automatic dip-buy ladder. Shows a confirmation screen first; goes
+  through the same exchange-rule validation and risk gate as an automatic
+  dip-buy (emergency stop / daily loss limit / capital caps all apply)
+- `/manualsell <grid_id> [inr_amount]` — sell part (or, if you omit the
+  amount, all) of a grid's position right now, regardless of current profit.
+  Shows a confirmation screen first. Manual sells are never blocked by
+  emergency stop or risk limits, since reducing a position is always allowed
+- `/adjustgrid <grid_id> <field> <value>` — change one setting on a running
+  grid without stopping it. Adjustable fields: `dip_buy_amount`,
+  `dip_percentage`, `profit_sell_amount`, `profit_percentage`, `max_levels`,
+  `stop_loss_percentage`, `trailing_enabled`, `trailing_percentage`.
+  Changing `dip_percentage`/`profit_percentage` immediately recomputes the
+  grid's next buy/sell price so the change takes effect on the very next
+  price tick, not just the next fill
 
 **Monitoring**
 - `/status` — bot health, wallet balance, emergency-stop state

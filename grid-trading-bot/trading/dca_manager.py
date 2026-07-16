@@ -247,6 +247,226 @@ class DCAManager:
             await self._notifier.grid_stopped(grid["symbol"], grid_id, reason)
 
     # ------------------------------------------------------------------
+    # Manual buy / sell (user-initiated, outside the automatic dip/profit/
+    # stop-loss triggers — /buy and /sell Telegram commands)
+    # ------------------------------------------------------------------
+
+    async def manual_buy(self, grid_id: str, inr_amount: float):
+        """Place a manual buy on an active grid for a specific INR amount.
+
+        Goes through the exact same exchange-rule validation and risk gate
+        as an automatic dip-buy (calculate_quantity_for_inr, then
+        check_can_place_order) — a manual action must not be a way to
+        bypass emergency-stop or the daily loss limit. Unlike a dip-buy,
+        it is NOT gated on is_dip_triggered() or max_levels: this is a
+        deliberate, explicit user action, not the automatic ladder.
+
+        The resulting fill is processed by the same handle_order_filled
+        path as every other buy, so current_level/average_entry_price
+        update consistently regardless of what triggered the buy.
+
+        Raises ValueError with a clear reason on any validation/risk
+        failure; the caller (Telegram handler) is responsible for
+        reporting that to the user.
+        """
+        if inr_amount <= 0:
+            raise ValueError("Buy amount must be greater than zero.")
+
+        async with self._grid_lock(grid_id):
+            grid = await self._repos.grids.get(grid_id)
+            if not grid:
+                raise ValueError(f"Grid {grid_id} not found.")
+            if grid["status"] != GridStatus.ACTIVE.value:
+                raise ValueError(
+                    f"Grid {grid_id} is {grid['status']}, not active — cannot buy."
+                )
+
+            symbol: str = grid["symbol"]
+            mode: str = grid.get("mode", "real")
+
+            ticker = await self._exchange.get_ticker(symbol)
+            current_price = ticker.last_price
+
+            market_info = await self._exchange.get_market_info(symbol)
+            qty = calculate_quantity_for_inr(
+                inr_amount, current_price,
+                market_info.step_size, market_info.min_quantity,
+                min_notional=market_info.min_amount,
+                quantity_precision=market_info.target_currency_precision,
+                price_precision=market_info.base_currency_precision,
+            )
+
+            order_value_inr = qty * current_price
+            wallet_balance = await self._get_wallet_balance(mode)
+            risk_result = await self._risk.check_can_place_order(order_value_inr, wallet_balance)
+            if not risk_result.allowed:
+                raise ValueError(risk_result.reason)
+
+            order = await self._order_manager.place_dca_order(
+                grid_id=grid_id, symbol=symbol, side="buy",
+                price=current_price, quantity=qty,
+                order_type="market_order", mode=mode,
+            )
+            log.info(
+                "Manual buy placed: grid=%s order=%s qty=%.8f @ ₹%.2f mode=%s",
+                grid_id, order.order_id, qty, current_price, mode,
+            )
+            await self._notifier.order_submitted(
+                symbol=symbol, grid_id=grid_id, order_id=order.order_id,
+                side="buy", quantity=qty, price=current_price, mode=mode,
+            )
+            return order
+
+    async def manual_sell(self, grid_id: str, inr_amount: float | None):
+        """Place a manual sell on an active grid.
+
+        ``inr_amount=None`` sells the entire remaining position (full
+        close); otherwise sells that INR amount, clamped to the available
+        quantity exactly like an automatic profit-sell. Deliberately NOT
+        gated on is_profit_triggered() — this is an explicit user decision
+        to sell now regardless of current P&L.
+
+        Sells are not risk-gated (see _execute_dip_buy's docstring on why
+        buys and sells are treated asymmetrically): reducing a position
+        must never be blocked, including under emergency stop.
+
+        Raises ValueError with a clear reason on any validation failure.
+        """
+        async with self._grid_lock(grid_id):
+            grid = await self._repos.grids.get(grid_id)
+            if not grid:
+                raise ValueError(f"Grid {grid_id} not found.")
+            if grid["status"] != GridStatus.ACTIVE.value:
+                raise ValueError(
+                    f"Grid {grid_id} is {grid['status']}, not active — cannot sell."
+                )
+            total_qty: float = grid["total_quantity"]
+            if total_qty <= 0:
+                raise ValueError(f"Grid {grid_id} has no position to sell.")
+            if await self._repos.orders.count_pending_side(grid_id, "sell") > 0:
+                raise ValueError(
+                    f"Grid {grid_id} already has a sell order pending — wait for it to resolve."
+                )
+
+            symbol: str = grid["symbol"]
+            mode: str = grid.get("mode", "real")
+            ticker = await self._exchange.get_ticker(symbol)
+            current_price = ticker.last_price
+            market_info = await self._exchange.get_market_info(symbol)
+
+            if inr_amount is None:
+                desired_qty = total_qty
+            else:
+                if inr_amount <= 0:
+                    raise ValueError("Sell amount must be greater than zero.")
+                desired_qty = calculate_quantity_for_inr(
+                    inr_amount, current_price,
+                    market_info.step_size, market_info.min_quantity,
+                    min_notional=market_info.min_amount,
+                    quantity_precision=market_info.target_currency_precision,
+                    price_precision=market_info.base_currency_precision,
+                )
+
+            sell_qty = clamp_sell_quantity(desired_qty, total_qty, market_info.step_size)
+            check = validate_quantity(
+                sell_qty, current_price,
+                market_info.min_quantity,
+                step_size=market_info.step_size,
+                min_notional=market_info.min_amount,
+                quantity_precision=market_info.target_currency_precision,
+                price_precision=market_info.base_currency_precision,
+                unit_label=market_info.target_currency_short_name or "coins",
+            )
+            if not check.valid:
+                raise ValueError(check.reason)
+
+            order = await self._order_manager.place_dca_order(
+                grid_id=grid_id, symbol=symbol, side="sell",
+                price=current_price, quantity=sell_qty,
+                order_type="market_order", mode=mode,
+            )
+            log.info(
+                "Manual sell placed: grid=%s order=%s qty=%.8f @ ₹%.2f mode=%s",
+                grid_id, order.order_id, sell_qty, current_price, mode,
+            )
+            await self._notifier.order_submitted(
+                symbol=symbol, grid_id=grid_id, order_id=order.order_id,
+                side="sell", quantity=sell_qty, price=current_price, mode=mode,
+            )
+            return order
+
+    # A closed allow-list, not user input, drives which literal keyword is
+    # passed to update_state() below — see the safety note on
+    # DCAGridRepository.update_state for why this must never be **field-as-key.
+    ADJUSTABLE_GRID_FIELDS = frozenset({
+        "dip_buy_amount", "dip_percentage", "profit_sell_amount",
+        "profit_percentage", "max_levels", "stop_loss_percentage",
+        "trailing_enabled", "trailing_percentage",
+    })
+
+    async def adjust_grid(self, grid_id: str, field: str, value) -> dict:
+        """Adjust a single parameter of an existing active/paused grid
+        without stopping and recreating it.
+
+        dip_percentage and profit_percentage require special handling:
+        next_buy_price/next_sell_price are pre-computed and cached on the
+        grid record (see is_dip_triggered/is_profit_triggered in
+        dca_engine.py, which read the cached value rather than recomputing
+        from the percentage on every tick) — so simply updating the
+        percentage field alone would silently have NO effect until the next
+        buy/sell fill recomputed those prices naturally. Both are
+        recalculated and persisted here so the change takes effect on the
+        very next price tick, not the next fill.
+
+        max_levels and stop_loss_percentage are read fresh from the grid
+        record on every trigger check, so they need no special handling.
+        """
+        if field not in self.ADJUSTABLE_GRID_FIELDS:
+            raise ValueError(f"'{field}' cannot be adjusted this way.")
+
+        async with self._grid_lock(grid_id):
+            grid = await self._repos.grids.get(grid_id)
+            if not grid:
+                raise ValueError(f"Grid {grid_id} not found.")
+            if grid["status"] not in (GridStatus.ACTIVE.value, GridStatus.PAUSED.value):
+                raise ValueError(
+                    f"Grid {grid_id} is {grid['status']} — only active or paused grids can be adjusted."
+                )
+
+            if field == "dip_percentage":
+                last_buy_price = grid.get("last_buy_price") or 0.0
+                new_next_buy = (
+                    calculate_next_buy_price(last_buy_price, value) if last_buy_price > 0 else 0.0
+                )
+                await self._repos.grids.update_state(
+                    grid_id, dip_percentage=value, next_buy_price=new_next_buy,
+                )
+            elif field == "profit_percentage":
+                avg_entry = grid.get("average_entry_price") or 0.0
+                new_next_sell = (
+                    calculate_profit_target(avg_entry, value) if avg_entry > 0 else 0.0
+                )
+                await self._repos.grids.update_state(
+                    grid_id, profit_percentage=value, next_sell_price=new_next_sell,
+                )
+            elif field == "dip_buy_amount":
+                await self._repos.grids.update_state(grid_id, dip_buy_amount=value)
+            elif field == "profit_sell_amount":
+                await self._repos.grids.update_state(grid_id, profit_sell_amount=value)
+            elif field == "max_levels":
+                await self._repos.grids.update_state(grid_id, max_levels=int(value))
+            elif field == "stop_loss_percentage":
+                await self._repos.grids.update_state(grid_id, stop_loss_percentage=value)
+            elif field == "trailing_enabled":
+                await self._repos.grids.update_state(grid_id, trailing_enabled=bool(value))
+            elif field == "trailing_percentage":
+                await self._repos.grids.update_state(grid_id, trailing_percentage=value)
+
+            updated_grid = await self._repos.grids.get(grid_id)
+            log.info("Grid %s adjusted: %s -> %s", grid_id, field, value)
+            return updated_grid
+
+    # ------------------------------------------------------------------
     # Price trigger checks (called by the price-monitor loop in main.py)
     # ------------------------------------------------------------------
 
@@ -551,15 +771,11 @@ class DCAManager:
                     total_quantity=0.0,
                     total_investment=0.0,
                 )
-                await self._notifier.order_failed(
-                    symbol=symbol, grid_id=grid_id, order_id="(not placed)",
-                    side="sell", mode=mode,
-                    reason=(
-                        f"Grid closed — {sell_qty:.8f} "
-                        f"{market_info.target_currency_short_name or 'coins'} "
-                        f"(entire remaining position) could not be sold "
-                        f"({check.reason}) and was written off as dust."
-                    ),
+                await self._notifier.error(
+                    f"Profit sell {symbol}",
+                    f"Grid closed, but {sell_qty:.8f} {market_info.target_currency_short_name or 'coins'} "
+                    f"(the entire remaining position) could not be sold "
+                    f"({check.reason}) and was written off as dust.",
                 )
                 return
 

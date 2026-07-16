@@ -17,7 +17,7 @@ from storage.database import Database
 from utils.helpers import now_iso
 from utils.logger import get_logger
 
-log = get_logger("database")
+log = get_logger("storage")
 
 
 async def create_snapshot(db: Database, dest_dir: str | Path) -> Path:
