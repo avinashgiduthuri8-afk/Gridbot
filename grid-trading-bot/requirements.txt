@@ -8,3 +8,5 @@ pytest==9.1.1
 pytest-asyncio==1.4.0
 # Optional — only required if GDRIVE_BACKUP_ENABLED=true
 google-auth==2.35.0
+# Optional — only required if WEBHOOK_ENABLED=true
+aiohttp==3.11.11

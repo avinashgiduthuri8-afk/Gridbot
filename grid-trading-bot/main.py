@@ -235,6 +235,34 @@ async def async_main() -> None:
                 settings.backup.interval_hours, settings.backup.folder_id, settings.backup.retention_count,
             )
 
+    webhook_task: asyncio.Task | None = None
+    if settings.webhook.enabled:
+        # Lazy, opt-in import — aiohttp is only required when the webhook
+        # receiver is actually turned on, not a hard dependency otherwise.
+        try:
+            from webhooks.server import run_webhook_server
+        except ImportError as exc:
+            log.error(
+                "WEBHOOK_ENABLED=true but the aiohttp package is not installed "
+                "(pip install aiohttp). The webhook receiver will NOT run this "
+                "session — polling in order_monitor.py continues normally "
+                "regardless. Original error: %s", exc,
+            )
+        else:
+            webhook_task = asyncio.create_task(
+                run_webhook_server(
+                    repos=repos, dca_manager=dca_manager, notifier=notifier,
+                    secret=settings.webhook.secret, host=settings.webhook.host,
+                    port=settings.webhook.port, path=settings.webhook.path,
+                )
+            )
+            log.info(
+                "Webhook receiver enabled: %s:%d%s (verify CoinDCX's actual webhook "
+                "payload/signature format against this before relying on it — see "
+                "webhooks/server.py's module docstring)",
+                settings.webhook.host, settings.webhook.port, settings.webhook.path,
+            )
+
     stop_event = asyncio.Event()
 
     def _handle_signal() -> None:
@@ -272,6 +300,8 @@ async def async_main() -> None:
     alert_task.cancel()
     if drive_backup_task is not None:
         drive_backup_task.cancel()
+    if webhook_task is not None:
+        webhook_task.cancel()
     await price_monitor.stop()
     await order_monitor.stop()
     await exchange.close()

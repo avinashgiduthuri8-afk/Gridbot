@@ -20,5 +20,8 @@ services:
       # GDRIVE_BACKUP_ENABLED=true, at whatever path GDRIVE_SERVICE_ACCOUNT_JSON
       # points to inside the container. Example (uncomment and adjust):
       # - ./gdrive-key.json:/app/gdrive-key.json:ro
-    # No ports published: this bot only makes outbound connections
-    # (Telegram long-polling, CoinDCX REST, optional Drive backup).
+    # No ports published by default. If you enable the optional CoinDCX
+    # webhook receiver (WEBHOOK_ENABLED=true in .env), uncomment and adjust
+    # to match WEBHOOK_PORT:
+    # ports:
+    #   - "8080:8080"

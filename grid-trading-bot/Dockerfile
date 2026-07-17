@@ -34,8 +34,10 @@ RUN useradd --create-home --uid 1000 botuser \
     && chown -R botuser:botuser /app
 USER botuser
 
-# No ports are exposed: this bot only makes outbound connections (Telegram
-# long-polling, CoinDCX REST, optional Google Drive) — it never listens for
-# inbound traffic, unlike the optional future webhook receiver.
+# No ports are exposed by default: this bot only makes outbound connections
+# (Telegram long-polling, CoinDCX REST, optional Google Drive). If you
+# enable the optional CoinDCX webhook receiver (WEBHOOK_ENABLED=true), it
+# does listen for inbound HTTP — expose that port via `docker run -p` or
+# docker-compose.yml's `ports:` section (commented out there by default).
 
 CMD ["python", "main.py"]

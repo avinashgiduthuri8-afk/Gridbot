@@ -22,10 +22,11 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          # Optional dependency (only required when GDRIVE_BACKUP_ENABLED=true),
-          # installed here too so storage/drive_backup.py's import is exercised
-          # by the test suite rather than silently skipped.
+          # Optional dependencies (only required when the corresponding
+          # feature is enabled), installed here too so their modules are
+          # exercised by the test suite rather than silently skipped.
           pip install google-auth==2.35.0
+          pip install aiohttp==3.11.11
 
       # Fast first gate: catches syntax errors in seconds, before spending
       # time on the full test suite below.

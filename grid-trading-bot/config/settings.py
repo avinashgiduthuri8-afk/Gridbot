@@ -8,7 +8,7 @@ the app reads `os.environ` directly outside of this module.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
@@ -86,6 +86,15 @@ class BackupSettings:
 
 
 @dataclass(frozen=True)
+class WebhookSettings:
+    enabled: bool
+    host: str
+    port: int
+    path: str
+    secret: str
+
+
+@dataclass(frozen=True)
 class Settings:
     telegram_bot_token: str
     telegram_owner_id: int
@@ -105,6 +114,16 @@ class Settings:
     order_poll_interval_seconds: int
     price_poll_interval_seconds: int
     daily_summary_interval_seconds: int
+
+    # Defaulted (not a plain required field) specifically so every existing
+    # Settings(...) construction site — main.py, and every test that builds
+    # a Settings instance directly — keeps working unchanged; webhooks are
+    # opt-in and disabled by default. Must stay last: dataclass fields with
+    # defaults must follow every field without one.
+    webhook: WebhookSettings = field(default_factory=lambda: WebhookSettings(
+        enabled=False, host="0.0.0.0", port=8080,
+        path="/webhooks/coindcx/order-update", secret="",
+    ))
 
     def is_authorized(self, user_id: int) -> bool:
         return user_id == self.telegram_owner_id or user_id in self.telegram_allowed_ids
@@ -138,6 +157,23 @@ def load_settings() -> Settings:
             "(the destination Drive folder, shared with the service account's email)."
         )
 
+    webhook_enabled = _get_bool("WEBHOOK_ENABLED", False)
+    webhook = WebhookSettings(
+        enabled=webhook_enabled,
+        host=os.getenv("WEBHOOK_HOST", "0.0.0.0").strip(),
+        port=_get_int("WEBHOOK_PORT", 8080),
+        path=os.getenv("WEBHOOK_PATH", "/webhooks/coindcx/order-update").strip(),
+        # Falls back to the CoinDCX API secret if no dedicated webhook secret
+        # is set — see webhooks/server.py's module docstring for why this is
+        # a starting assumption to verify, not a confirmed CoinDCX behavior.
+        secret=os.getenv("WEBHOOK_SECRET", "").strip() or os.getenv("COINDCX_API_SECRET", "").strip(),
+    )
+    if webhook_enabled and not webhook.secret:
+        raise ConfigError(
+            "WEBHOOK_ENABLED=true requires WEBHOOK_SECRET (or COINDCX_API_SECRET as a "
+            "fallback) to be set, so incoming webhook requests can be authenticated."
+        )
+
     return Settings(
         telegram_bot_token=_require("TELEGRAM_BOT_TOKEN"),
         telegram_owner_id=telegram_owner_id,
@@ -150,6 +186,7 @@ def load_settings() -> Settings:
         log_level=os.getenv("LOG_LEVEL", "INFO").strip(),
         risk=risk,
         backup=backup,
+        webhook=webhook,
         order_poll_interval_seconds=_get_int("ORDER_POLL_INTERVAL_SECONDS", 8),
         price_poll_interval_seconds=_get_int("PRICE_POLL_INTERVAL_SECONDS", 5),
         daily_summary_interval_seconds=_get_int("DAILY_SUMMARY_INTERVAL_SECONDS", 86400),

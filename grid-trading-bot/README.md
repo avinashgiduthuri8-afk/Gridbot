@@ -191,8 +191,12 @@ Notes:
   `docker-compose.yml` — and point `GDRIVE_SERVICE_ACCOUNT_JSON` in `.env`
   at wherever you mounted it *inside* the container (e.g.
   `/app/gdrive-key.json`), not its path on the host.
-- No ports are published; this bot never listens for inbound connections
-  (Telegram uses long-polling, not webhooks, in this codebase).
+- No ports are published by default; this bot doesn't listen for inbound
+  connections unless you've turned on the optional CoinDCX webhook receiver
+  (`WEBHOOK_ENABLED=true` — see below). Telegram itself always uses
+  long-polling, never a webhook, in this codebase. If you do enable the
+  webhook receiver in Docker, add `ports: ["8080:8080"]` (or your configured
+  `WEBHOOK_PORT`) to the `gridbot` service in `docker-compose.yml`.
 
 ## Continuous Integration
 
@@ -335,6 +339,47 @@ success or failure. If `google-auth` isn't installed but
 `GDRIVE_BACKUP_ENABLED=true`, the bot logs an error and simply skips Drive
 backup for that session rather than failing to start — everything else
 continues normally.
+
+## CoinDCX order-update webhooks (optional, experimental)
+
+Off by default. The bot already detects fills reliably through polling
+(`ORDER_POLL_INTERVAL_SECONDS`, default every few seconds) — this is purely
+an optional accelerant for slightly faster fill detection, not something
+you need for the bot to work correctly.
+
+**Read this before enabling it in production:** this receiver's signature
+verification and payload parsing were built without access to CoinDCX's
+live webhook documentation (no network access at build time). Two things
+are *assumptions*, not confirmed facts:
+1. **Signing scheme** — assumes CoinDCX signs webhook bodies with
+   HMAC-SHA256 using your API secret, sent in an `X-Webhook-Signature`
+   header. Verify the actual header name and scheme against CoinDCX's
+   current docs.
+2. **Payload shape** — assumes fields named like their REST order-status
+   responses (`id`, `status`, `filled_quantity`, `avg_price`).
+
+Because of that uncertainty, this is designed so a missed or malformed
+webhook is always silently caught by the next poll cycle anyway — never a
+replacement for polling, only ever an accelerant on top of it. Applying a
+fill twice (once from a webhook, once from the poller) is also safe, since
+the underlying fill-handling is idempotent.
+
+To enable:
+```bash
+pip install aiohttp   # see requirements.txt
+```
+```
+WEBHOOK_ENABLED=true
+WEBHOOK_HOST=0.0.0.0
+WEBHOOK_PORT=8080
+WEBHOOK_PATH=/webhooks/coindcx/order-update
+WEBHOOK_SECRET=            # falls back to COINDCX_API_SECRET if left blank
+```
+Then point CoinDCX's webhook configuration (once you've confirmed the real
+signature/payload format against their docs and adjusted
+`webhooks/server.py` if needed) at
+`http://your-host:8080/webhooks/coindcx/order-update`. A basic liveness
+check is available at `/webhooks/health`.
 
 ## Recovery after restart
 
