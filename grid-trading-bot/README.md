@@ -251,6 +251,20 @@ build to catch a broken `Dockerfile` before it reaches a real deployment.
 - `/monitor` — price/order monitor health (poll interval, degraded state, failure counts)
 - `/export` — download the complete trade history as a CSV file (for offline accounting/tax analysis)
 - `/backup` — download the raw SQLite database file (all grids, configs, and history in one file)
+- `/backupstatus` — check the automatic Google Drive backup's health: last
+  successful backup, last error (if any), and a live count of backups
+  currently in the Drive folder (if enabled)
+- `/restorelist [page]` — browse available Google Drive backups, newest
+  first, 10 per page with Prev/Next buttons. Shows date/time, file name,
+  size, the database schema version it was taken at, and whether it was an
+  automatic or manual backup
+- `/verifybackup <number|latest>` — download a specific backup (using the
+  number shown in `/restorelist`, or `latest` for the most recent) and
+  confirm it's actually intact and restorable: runs SQLite's own
+  `PRAGMA integrity_check`, confirms every critical table is present, and
+  shows row counts. Every automatic backup is already verified this way
+  immediately after upload — this lets you re-check any existing backup,
+  including old ones, on demand
 - `/logs` — most recent log entries
 
 **Price alerts** (persisted across restarts)
@@ -332,13 +346,19 @@ by default, opt-in via environment variables.
 Every interval, the bot takes a **consistent snapshot** of the SQLite
 database (using SQLite's own backup API, not a raw file copy — this
 correctly captures any data still sitting in the WAL file that hasn't been
-checkpointed yet, unlike a plain file copy would), uploads it to the
-configured folder, and deletes the oldest backups beyond
-`GDRIVE_BACKUP_RETENTION_COUNT`. You'll get a Telegram notification on
-success or failure. If `google-auth` isn't installed but
-`GDRIVE_BACKUP_ENABLED=true`, the bot logs an error and simply skips Drive
-backup for that session rather than failing to start — everything else
-continues normally.
+checkpointed yet, unlike a plain file copy would), **verifies the snapshot
+is intact before uploading it**, uploads it to the configured folder,
+**downloads it back and verifies that copy too** (confirming the round trip
+through Drive didn't corrupt or truncate anything), and deletes the oldest
+backups beyond `GDRIVE_BACKUP_RETENTION_COUNT`. If either verification step
+fails, the whole backup is reported as failed — a backup that can't be
+confirmed intact is treated as no backup at all, not a success with a
+caveat. You'll get a Telegram notification on success or failure, and
+`/backupstatus` always shows the latest outcome. Use `/verifybackup` any
+time to re-check an existing (including old) backup on demand. If
+`google-auth` isn't installed but `GDRIVE_BACKUP_ENABLED=true`, the bot
+logs an error and simply skips Drive backup for that session rather than
+failing to start — everything else continues normally.
 
 ## CoinDCX order-update webhooks (optional, experimental)
 

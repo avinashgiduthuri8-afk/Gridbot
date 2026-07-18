@@ -28,6 +28,7 @@ from bot_telegram.keyboards import (
     grid_action_keyboard,
     main_menu_keyboard,
     manual_trade_confirm_keyboard,
+    restorelist_pagination_keyboard,
 )
 from utils.helpers import now_iso
 from utils.logger import get_logger
@@ -64,6 +65,10 @@ HELP_TEXT = (
     "/monitor &lt;seconds&gt; — change refresh interval (2/5/10/15/30)\n"
     "/export — download full trade history as CSV\n"
     "/backup — download raw SQLite database\n"
+    "/backupstatus — check automatic Google Drive backup status (if enabled)\n"
+    "/restorelist [page] — browse available Google Drive backups (newest first, 10 per page)\n"
+    "/verifybackup &lt;number|latest&gt; — download and verify a backup is intact "
+    "and restorable (integrity check + confirms core tables are present)\n"
     "/logs — recent log entries\n\n"
     "<b>Emergency control</b>\n"
     "/emergencystop — block all new trades immediately\n"
@@ -395,6 +400,282 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
                 document=InputFile(f, filename=filename),
                 caption=f"SQLite backup ({size_kb:.1f} KB). Keep it safe — contains all grids and history.",
             )
+
+    @authorized
+    async def backupstatus_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        from datetime import datetime, timezone
+
+        def _time_ago(iso_str: str | None) -> str:
+            if not iso_str:
+                return "never"
+            try:
+                then = datetime.fromisoformat(iso_str)
+            except ValueError:
+                return iso_str
+            delta = datetime.now(timezone.utc) - then
+            seconds = delta.total_seconds()
+            if seconds < 60:
+                return f"{int(seconds)}s ago"
+            if seconds < 3600:
+                return f"{int(seconds // 60)}m ago"
+            if seconds < 86400:
+                return f"{seconds / 3600:.1f}h ago"
+            return f"{seconds / 86400:.1f}d ago"
+
+        backup_cfg = app_context.settings.backup
+        if not backup_cfg.enabled:
+            await update.message.reply_text(
+                "☁️ <b>Drive Backup Status</b>\n\n"
+                "Disabled. Set <code>GDRIVE_BACKUP_ENABLED=true</code> in .env to turn it on "
+                "— see the README's \"Automatic Google Drive backup\" section.",
+                parse_mode="HTML",
+            )
+            return
+
+        status = await app_context.repos.monitor_settings.get_backup_status()
+        lines = ["☁️ <b>Drive Backup Status</b>\n"]
+        lines.append(f"Enabled: yes (every {backup_cfg.interval_hours:.1f}h, retaining {backup_cfg.retention_count} most recent)")
+
+        if status is None:
+            lines.append("\nNo backup has run yet — the first one fires "
+                         f"~{backup_cfg.interval_hours:.1f}h after this bot started.")
+        else:
+            last_success_at = status.get("last_success_at")
+            last_success_file = status.get("last_success_file_id")
+            last_error_at = status.get("last_error_at")
+            last_error_msg = status.get("last_error_message")
+
+            if last_success_at:
+                lines.append(f"\n✅ Last successful backup: {_time_ago(last_success_at)}")
+                lines.append(f"   File ID: <code>{last_success_file}</code>")
+            else:
+                lines.append("\n⚠️ No successful backup recorded yet.")
+
+            if last_error_at:
+                # Only worth surfacing prominently if it's more recent than
+                # the last success — otherwise it's a stale, already-resolved failure.
+                is_more_recent = (not last_success_at) or (last_error_at > last_success_at)
+                marker = "🔴" if is_more_recent else "ℹ️"
+                lines.append(f"\n{marker} Last error: {_time_ago(last_error_at)}")
+                lines.append(f"   {last_error_msg}")
+
+        if app_context.drive_backup_manager is not None:
+            try:
+                backups = await app_context.drive_backup_manager.list_backups()
+                lines.append(f"\n📁 {len(backups)} backup(s) currently in the Drive folder.")
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"\n⚠️ Could not reach Google Drive to confirm folder contents: {exc}")
+
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+    _RESTORELIST_PAGE_SIZE = 10
+
+    def _human_size(num_bytes) -> str:
+        try:
+            n = float(num_bytes)
+        except (TypeError, ValueError):
+            return "unknown size"
+        if n < 1024:
+            return f"{n:.0f} B"
+        if n < 1024 * 1024:
+            return f"{n / 1024:.1f} KB"
+        return f"{n / (1024 * 1024):.1f} MB"
+
+    def _format_backup_datetime(created_time) -> str:
+        if not created_time:
+            return "unknown date"
+        try:
+            from datetime import datetime
+            # Drive's createdTime is RFC3339, e.g. "2026-07-17T06:00:00.123Z"
+            dt = datetime.fromisoformat(str(created_time).replace("Z", "+00:00"))
+            return dt.strftime("%Y-%m-%d %H:%M UTC")
+        except (ValueError, TypeError):
+            return str(created_time)
+
+    def _render_restorelist_page(backups: list, page: int) -> tuple[str, object]:
+        """Shared by the command and the pagination callback. backups is
+        expected oldest-first (as returned by list_backups()) — sorted
+        newest-first here. Defensive against malformed entries (missing
+        fields, non-numeric size) — never raises on bad metadata, just
+        falls back to "unknown".
+        """
+        newest_first = list(reversed(backups))
+        total = len(newest_first)
+        page_size = _RESTORELIST_PAGE_SIZE
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        page = max(1, min(page, total_pages))
+
+        start = (page - 1) * page_size
+        page_items = newest_first[start:start + page_size]
+
+        lines = [f"📦 <b>Backup Restore List</b> (Page {page}/{total_pages})", f"Total backups: {total}\n"]
+        for offset, backup in enumerate(page_items):
+            number = start + offset + 1
+            props = backup.get("properties") or {}
+            backup_type = props.get("backup_type", "auto").capitalize()
+            schema_version = props.get("schema_version", "unknown")
+            lines.append(
+                f"{number}. {_format_backup_datetime(backup.get('createdTime'))}\n"
+                f"   <code>{backup.get('name', 'unknown')}</code>\n"
+                f"   {_human_size(backup.get('size'))} | Schema v{schema_version} | {backup_type}"
+            )
+
+        text = "\n".join(lines)
+        keyboard = restorelist_pagination_keyboard(page, total_pages)
+        return text, keyboard
+
+    @authorized
+    async def restorelist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not app_context.settings.backup.enabled or app_context.drive_backup_manager is None:
+            await update.message.reply_text(
+                "Google Drive backup isn't enabled — nothing to list. "
+                "Set GDRIVE_BACKUP_ENABLED=true in .env; see the README's "
+                "\"Automatic Google Drive backup\" section."
+            )
+            return
+
+        try:
+            backups = await app_context.drive_backup_manager.list_backups()
+        except Exception as exc:  # noqa: BLE001
+            await update.message.reply_text(
+                f"⚠️ Could not reach Google Drive to list backups: {exc}\n\n"
+                "This doesn't affect trading — only the ability to browse backups right now."
+            )
+            return
+
+        if not backups:
+            await update.message.reply_text(
+                "📦 No backups found in the Drive folder yet.\n"
+                "The first automatic one will appear after the configured backup interval, "
+                "or check /backupstatus for details."
+            )
+            return
+
+        page = 1
+        if context.args:
+            try:
+                page = int(context.args[0])
+            except ValueError:
+                pass  # silently fall back to page 1 rather than error on a typo'd arg
+
+        text, keyboard = _render_restorelist_page(backups, page)
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+    async def restorelist_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if not app_context.is_authorized(query.from_user.id):
+            await query.answer("Not authorized.", show_alert=True)
+            return
+        await query.answer()
+
+        if app_context.drive_backup_manager is None:
+            await query.edit_message_text("Google Drive backup isn't enabled.")
+            return
+
+        _, page_str = query.data.split(":", 1)
+        try:
+            page = int(page_str)
+        except ValueError:
+            page = 1
+
+        try:
+            backups = await app_context.drive_backup_manager.list_backups()
+        except Exception as exc:  # noqa: BLE001
+            await query.edit_message_text(f"⚠️ Could not reach Google Drive to list backups: {exc}")
+            return
+
+        if not backups:
+            await query.edit_message_text("📦 No backups found in the Drive folder.")
+            return
+
+        text, keyboard = _render_restorelist_page(backups, page)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+    @authorized
+    async def verifybackup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not app_context.settings.backup.enabled or app_context.drive_backup_manager is None:
+            await update.message.reply_text(
+                "Google Drive backup isn't enabled — nothing to verify."
+            )
+            return
+        if not context.args:
+            await update.message.reply_text(
+                "Usage: /verifybackup <number>\n"
+                "Use the number shown in /restorelist, or /verifybackup latest "
+                "for the most recent backup.\n\n"
+                "This downloads the backup and checks it's an intact, restorable "
+                "database — not just that it exists in Drive."
+            )
+            return
+
+        try:
+            backups = await app_context.drive_backup_manager.list_backups()
+        except Exception as exc:  # noqa: BLE001
+            await update.message.reply_text(f"⚠️ Could not reach Google Drive to look up that backup: {exc}")
+            return
+        if not backups:
+            await update.message.reply_text("📦 No backups found in the Drive folder to verify.")
+            return
+
+        newest_first = list(reversed(backups))
+        arg = context.args[0].lower()
+        if arg == "latest":
+            target = newest_first[0]
+        else:
+            try:
+                index = int(context.args[0])
+            except ValueError:
+                await update.message.reply_text("Backup number must be an integer, or 'latest'.")
+                return
+            if not (1 <= index <= len(newest_first)):
+                await update.message.reply_text(
+                    f"No backup #{index} — there are {len(newest_first)} backups. "
+                    "Use /restorelist to see valid numbers."
+                )
+                return
+            target = newest_first[index - 1]
+
+        progress_msg = await update.message.reply_text(
+            f"⏳ Downloading and verifying <code>{target.get('name', target['id'])}</code>…",
+            parse_mode="HTML",
+        )
+
+        try:
+            result = await app_context.drive_backup_manager.verify_backup_by_id(target["id"])
+        except Exception as exc:  # noqa: BLE001
+            await progress_msg.edit_text(f"⚠️ Could not verify this backup: {exc}")
+            return
+
+        if result["valid"]:
+            lines = [
+                f"✅ <b>Backup Verified</b>\n",
+                f"File: <code>{target.get('name', target['id'])}</code>",
+                f"Integrity check: {result['integrity_check']}",
+                f"Schema version: {result.get('schema_version', 'unknown')}",
+            ]
+            row_counts = result.get("row_counts", {})
+            if row_counts:
+                counts_str = ", ".join(f"{k}: {v}" for k, v in row_counts.items())
+                lines.append(f"Row counts: {counts_str}")
+            if result.get("missing_optional_tables"):
+                lines.append(
+                    f"\nℹ️ Missing non-critical tables (normal for an older backup): "
+                    f"{', '.join(result['missing_optional_tables'])}"
+                )
+            await progress_msg.edit_text("\n".join(lines), parse_mode="HTML")
+        else:
+            lines = [
+                f"❌ <b>Backup FAILED Verification</b>\n",
+                f"File: <code>{target.get('name', target['id'])}</code>",
+                f"This backup should NOT be relied on for a restore.",
+            ]
+            if result.get("error"):
+                lines.append(f"\nReason: {result['error']}")
+            if result.get("missing_critical_tables"):
+                lines.append(f"Missing critical tables: {', '.join(result['missing_critical_tables'])}")
+            if result.get("integrity_check") and result["integrity_check"] != "ok":
+                lines.append(f"SQLite integrity check: {result['integrity_check']}")
+            await progress_msg.edit_text("\n".join(lines), parse_mode="HTML")
 
     # ------------------------------------------------------------------
     # Grid control
@@ -977,6 +1258,9 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
     app.add_handler(CommandHandler("monitor", monitor_cmd))
     app.add_handler(CommandHandler("export", export_cmd))
     app.add_handler(CommandHandler("backup", backup_cmd))
+    app.add_handler(CommandHandler("backupstatus", backupstatus_cmd))
+    app.add_handler(CommandHandler("restorelist", restorelist_cmd))
+    app.add_handler(CommandHandler("verifybackup", verifybackup_cmd))
     app.add_handler(CommandHandler("logs", logs_cmd))
     app.add_handler(CommandHandler("defaults", defaults_cmd))
     app.add_handler(CommandHandler("stopgrid", stopgrid_cmd))
@@ -993,3 +1277,4 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
     app.add_handler(CallbackQueryHandler(emergency_callback, pattern="^emergency:"))
     app.add_handler(CallbackQueryHandler(grid_action_callback, pattern="^grid_action:"))
     app.add_handler(CallbackQueryHandler(manual_trade_callback, pattern="^mtrade:"))
+    app.add_handler(CallbackQueryHandler(restorelist_page_callback, pattern="^restorelist_page:"))

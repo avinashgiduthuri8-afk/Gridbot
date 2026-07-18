@@ -35,6 +35,12 @@ class BotAppContext:
     notifier: Notifier
     alert_manager: AlertManager
     price_monitor: PriceMonitor
+    # Only set when GDRIVE_BACKUP_ENABLED=true (see main.py) — used by
+    # /backupstatus and /restorelist to query Drive directly. Typed loosely
+    # to avoid a hard import of storage.drive_backup (and therefore
+    # google-auth) here, since that module is only imported when the
+    # feature is actually enabled.
+    drive_backup_manager: object | None = None
 
     def is_authorized(self, user_id: int) -> bool:
         return self.settings.is_authorized(user_id)

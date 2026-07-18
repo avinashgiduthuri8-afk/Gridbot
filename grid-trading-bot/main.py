@@ -89,7 +89,7 @@ async def run_daily_summary_loop(
 
 
 async def run_drive_backup_loop(
-    backup_manager: "DriveBackupManager", notifier: Notifier, interval_seconds: int
+    backup_manager: "DriveBackupManager", notifier: Notifier, repos: Repositories, interval_seconds: int
 ) -> None:
     """Periodically snapshot the DB and upload it to Google Drive.
 
@@ -100,10 +100,12 @@ async def run_drive_backup_loop(
     while True:
         await asyncio.sleep(interval_seconds)
         try:
-            file_id = await backup_manager.create_backup_and_upload()
+            file_id = await backup_manager.create_backup_and_upload(backup_type="auto")
+            await repos.monitor_settings.record_backup_success(file_id)
             await notifier.drive_backup_completed(file_id)
         except Exception as exc:  # noqa: BLE001
             log.exception("Drive backup loop failed")
+            await repos.monitor_settings.record_backup_failure(str(exc))
             await notifier.drive_backup_failed(str(exc))
 
 
@@ -226,9 +228,13 @@ async def async_main() -> None:
                 service_account_json_path=settings.backup.service_account_json_path,
                 retention_count=settings.backup.retention_count,
             )
+            # BotAppContext was already built above (before this manager
+            # existed) — attach it now so /backupstatus and /restorelist
+            # can query Drive directly. Not frozen, so this is safe.
+            app_context.drive_backup_manager = drive_backup_manager
             interval_seconds = int(settings.backup.interval_hours * 3600)
             drive_backup_task = asyncio.create_task(
-                run_drive_backup_loop(drive_backup_manager, notifier, interval_seconds)
+                run_drive_backup_loop(drive_backup_manager, notifier, repos, interval_seconds)
             )
             log.info(
                 "Google Drive backup enabled: every %.1fh, folder=%s, retention=%d",

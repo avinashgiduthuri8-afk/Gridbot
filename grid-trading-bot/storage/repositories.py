@@ -6,6 +6,7 @@ touch SQL directly — they work through these typed, async methods.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Iterable
 
 import aiosqlite
@@ -403,9 +404,56 @@ class MonitorSettingsRepository:
 
     _KEY_INTERVAL = "price_monitor_interval"
     _KEY_EMERGENCY_STOP = "emergency_stop"
+    _KEY_BACKUP_STATUS = "drive_backup_status"
 
     def __init__(self, db: Database) -> None:
         self._db = db
+
+    async def get_backup_status(self) -> dict[str, Any] | None:
+        """Return the last-known Drive backup outcome, or None if a backup
+        has never run this database's lifetime. Shape:
+        {last_success_at, last_success_file_id, last_error_at, last_error_message}
+        (any of these may be None/absent individually).
+        """
+        cur = await self._db.connection.execute(
+            "SELECT value FROM monitor_settings WHERE key = ?",
+            (self._KEY_BACKUP_STATUS,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        return json.loads(row["value"])
+
+    async def record_backup_success(self, file_id: str) -> None:
+        """Record a successful backup, clearing any previously-recorded
+        error (a fresh success supersedes it for status-reporting purposes)."""
+        status = await self.get_backup_status() or {}
+        status["last_success_at"] = now_iso()
+        status["last_success_file_id"] = file_id
+        status["last_error_at"] = None
+        status["last_error_message"] = None
+        await self._save_backup_status(status)
+
+    async def record_backup_failure(self, error_message: str) -> None:
+        """Record a failed backup attempt. Deliberately does NOT clear the
+        last recorded success — /backupstatus should still be able to show
+        "last good backup was N hours ago" even while also showing the most
+        recent failure.
+        """
+        status = await self.get_backup_status() or {}
+        status["last_error_at"] = now_iso()
+        status["last_error_message"] = error_message
+        await self._save_backup_status(status)
+
+    async def _save_backup_status(self, status: dict[str, Any]) -> None:
+        await self._db.connection.execute(
+            """INSERT INTO monitor_settings (key, value, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                              updated_at = excluded.updated_at""",
+            (self._KEY_BACKUP_STATUS, json.dumps(status), now_iso()),
+        )
+        await self._db.connection.commit()
 
     async def get_emergency_stop(self) -> bool:
         """Return the persisted emergency-stop state (defaults to False)."""

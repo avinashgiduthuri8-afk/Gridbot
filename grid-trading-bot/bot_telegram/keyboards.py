@@ -123,6 +123,19 @@ def manual_trade_confirm_keyboard(action: str, grid_id: str, amount: float | Non
     )
 
 
+def restorelist_pagination_keyboard(current_page: int, total_pages: int) -> InlineKeyboardMarkup | None:
+    """Prev/Next buttons for /restorelist. Returns None when there's only
+    one page (no point showing disabled-looking buttons for nothing)."""
+    if total_pages <= 1:
+        return None
+    row = []
+    if current_page > 1:
+        row.append(InlineKeyboardButton("◀️ Prev", callback_data=f"restorelist_page:{current_page - 1}"))
+    if current_page < total_pages:
+        row.append(InlineKeyboardButton("Next ▶️", callback_data=f"restorelist_page:{current_page + 1}"))
+    return InlineKeyboardMarkup([row])
+
+
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
