@@ -262,7 +262,7 @@ class TestOrderLifecycle:
     async def test_transient_error_sets_failed_status_with_warning(
         self, order_manager, repos, mock_exchange
     ):
-        """Network timeout → FAILED (uncertain delivery, not REJECTED)."""
+        """Network timeout → UNKNOWN (uncertain delivery, not REJECTED)."""
         mock_exchange.place_exception = ExchangeTimeoutError("timed out")
         grid = _make_grid()
         await repos.grids.create(grid)
@@ -274,8 +274,7 @@ class TestOrderLifecycle:
             )
 
         orders = await repos.orders.list_for_grid(grid.grid_id)
-        # Status is FAILED; not REJECTED (different permanent-vs-transient semantics)
-        assert orders[0]["status"] == OrderStatus.FAILED.value
+        assert orders[0]["status"] == OrderStatus.UNKNOWN.value
 
     @pytest.mark.anyio
     async def test_cancel_order_updates_status(self, order_manager, repos, mock_exchange):
@@ -505,11 +504,11 @@ class TestRestartRecovery:
         mock_exchange.open_orders_override = [orphan_ex]
 
         summary = await recovery.recover()
-        assert summary["reconciled_orders"] >= 1
+        assert summary["reconciled_orders"] == 0
 
         db_order = await repos.orders.get(order.order_id)
-        assert db_order["exchange_order_id"] == "EX_MATCH_001"
-        assert db_order["status"] == OrderStatus.OPEN.value
+        assert db_order["exchange_order_id"] is None
+        assert db_order["status"] == OrderStatus.UNKNOWN.value
 
     @pytest.mark.anyio
     async def test_submitted_order_without_match_marked_failed(
@@ -532,7 +531,7 @@ class TestRestartRecovery:
         await recovery.recover()
 
         db_order = await repos.orders.get(order.order_id)
-        assert db_order["status"] == OrderStatus.FAILED.value
+        assert db_order["status"] == OrderStatus.UNKNOWN.value
 
     @pytest.mark.anyio
     async def test_recovery_ignores_already_terminal_orders(self, recovery, repos):
@@ -698,7 +697,7 @@ class TestRetryLogic:
     async def test_transient_error_does_not_produce_rejected_status(
         self, order_manager, repos, mock_exchange
     ):
-        """Timeout → FAILED (not REJECTED); the distinction matters for recovery."""
+        """Timeout → UNKNOWN (not REJECTED); reconciliation owns the result."""
         mock_exchange.place_exception = ExchangeTimeoutError("timeout")
         grid = _make_grid()
         await repos.grids.create(grid)
@@ -710,12 +709,12 @@ class TestRetryLogic:
             )
 
         orders = await repos.orders.list_for_grid(grid.grid_id)
-        assert orders[0]["status"] == OrderStatus.FAILED.value
+        assert orders[0]["status"] == OrderStatus.UNKNOWN.value
         # NOT REJECTED
         assert orders[0]["status"] != OrderStatus.REJECTED.value
 
     @pytest.mark.anyio
-    async def test_connection_error_also_sets_failed_not_rejected(
+    async def test_connection_error_also_sets_unknown_not_rejected(
         self, order_manager, repos, mock_exchange
     ):
         mock_exchange.place_exception = ExchangeConnectionError("network down")
@@ -729,7 +728,7 @@ class TestRetryLogic:
             )
 
         orders = await repos.orders.list_for_grid(grid.grid_id)
-        assert orders[0]["status"] == OrderStatus.FAILED.value
+        assert orders[0]["status"] == OrderStatus.UNKNOWN.value
 
     @pytest.mark.anyio
     async def test_transient_error_leaves_submitted_state_before_failure(
@@ -759,9 +758,9 @@ class TestRetryLogic:
                 side="buy", price=54000.0, quantity=0.001,
             )
 
-        # Should have seen: SUBMITTED (before call), then FAILED (after timeout)
+        # SUBMITTED is persisted before the create; the row then becomes UNKNOWN.
         assert OrderStatus.SUBMITTED.value in transitions
-        assert transitions[-1] == OrderStatus.FAILED.value
+        assert (await repos.orders.list_for_grid(grid.grid_id))[0]["status"] == OrderStatus.UNKNOWN.value
 
 
 # ===========================================================================
@@ -915,8 +914,8 @@ class TestCrashRecovery:
         await recovery.recover()
 
         db_order = await repos.orders.get(order.order_id)
-        # Should NOT be linked — should be FAILED
-        assert db_order["status"] == OrderStatus.FAILED.value
+        # Should NOT be linked — unresolved records remain UNKNOWN.
+        assert db_order["status"] == OrderStatus.UNKNOWN.value
         assert db_order["exchange_order_id"] is None
 
     @pytest.mark.anyio
@@ -1139,8 +1138,8 @@ class TestUncertainOrderLinking:
             )
 
         orders = await repos.orders.list_for_grid(grid.grid_id)
-        assert orders[0]["exchange_order_id"] == "EX_LANDED"
-        assert orders[0]["status"] == OrderStatus.OPEN.value
+        assert orders[0]["exchange_order_id"] is None
+        assert orders[0]["status"] == OrderStatus.UNKNOWN.value
 
     @pytest.mark.anyio
     async def test_transient_failure_marks_failed_when_no_match(
@@ -1158,7 +1157,7 @@ class TestUncertainOrderLinking:
             )
 
         orders = await repos.orders.list_for_grid(grid.grid_id)
-        assert orders[0]["status"] == OrderStatus.FAILED.value
+        assert orders[0]["status"] == OrderStatus.UNKNOWN.value
         assert orders[0]["exchange_order_id"] is None
 
     @pytest.mark.anyio
@@ -1182,7 +1181,7 @@ class TestUncertainOrderLinking:
             )
 
         orders = await repos.orders.list_for_grid(grid.grid_id)
-        assert orders[0]["status"] == OrderStatus.FAILED.value
+        assert orders[0]["status"] == OrderStatus.UNKNOWN.value
         assert orders[0]["exchange_order_id"] is None
 
 
@@ -1214,7 +1213,7 @@ class TestRecoveryHardening:
         await recovery.recover()
 
         db_order = await repos.orders.get(order.order_id)
-        assert db_order["status"] == OrderStatus.FAILED.value
+        assert db_order["status"] == OrderStatus.UNKNOWN.value
         assert db_order["exchange_order_id"] is None
 
     @pytest.mark.anyio
@@ -1238,7 +1237,7 @@ class TestRecoveryHardening:
         await recovery.recover()
 
         db_order = await repos.orders.get(order.order_id)
-        assert db_order["status"] == OrderStatus.FAILED.value
+        assert db_order["status"] == OrderStatus.UNKNOWN.value
 
     @pytest.mark.anyio
     async def test_orphan_detection_skips_paper_grids(

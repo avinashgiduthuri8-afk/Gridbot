@@ -57,6 +57,11 @@ class OrderRecord:
     status: str
     created_at: str
     updated_at: str
+    fee: float = 0.0
+    # For new CoinDCX orders this is exactly ``order_id`` and is never regenerated.
+    client_order_id: str | None = None
+    reconciliation_status: str = "not_needed"
+    reconciliation_retry_count: int = 0
 
 
 @dataclass

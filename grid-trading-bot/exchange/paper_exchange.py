@@ -62,6 +62,7 @@ class _SimulatedOrder:
     has_partial_stage: bool
     partial_ratio: float
     partial_extra_delay_seconds: float
+    client_order_id: str = ""
     status: str = OrderStatus.OPEN.value
     filled_quantity: float = 0.0
 
@@ -119,7 +120,12 @@ class PaperExchangeClient(ExchangeClient):
     async def get_open_orders(self, symbol: str | None = None) -> list[ExchangeOrder]:
         return []
 
-    async def get_trade_history(self, symbol: str | None = None, limit: int = 50) -> list[Trade]:
+    async def get_trade_history(
+        self,
+        symbol: str | None = None,
+        limit: int = 50,
+        order_id: str | None = None,
+    ) -> list[Trade]:
         return []
 
     # ------------------------------------------------------------------
@@ -143,6 +149,7 @@ class PaperExchangeClient(ExchangeClient):
         price: float,
         quantity: float,
         order_type: str = "market_order",
+        client_order_id: str | None = None,
     ) -> ExchangeOrder:
         try:
             ticker = await self._real.get_ticker(symbol)
@@ -174,6 +181,7 @@ class PaperExchangeClient(ExchangeClient):
             fill_price=fill_price, placed_at=self._time_fn(), latency_seconds=latency,
             has_partial_stage=has_partial, partial_ratio=partial_ratio,
             partial_extra_delay_seconds=partial_extra_delay,
+            client_order_id=client_order_id or "",
         )
         self._paper_orders[eid] = sim
 
@@ -198,6 +206,8 @@ class PaperExchangeClient(ExchangeClient):
             price=fill_price, quantity=quantity,
             filled_quantity=0.0, filled_price=0.0,
             status=OrderStatus.OPEN.value, raw_status="open",
+            fee=0.0,
+            client_order_id=client_order_id or "",
         )
 
     def _to_exchange_order(self, sim: _SimulatedOrder) -> ExchangeOrder:
@@ -207,6 +217,8 @@ class PaperExchangeClient(ExchangeClient):
             filled_quantity=sim.filled_quantity,
             filled_price=sim.fill_price if sim.filled_quantity > 0 else 0.0,
             status=sim.status, raw_status=sim.status,
+            fee=0.0,
+            client_order_id=sim.client_order_id,
         )
 
     async def cancel_order(self, exchange_order_id: str) -> bool:
@@ -227,7 +239,7 @@ class PaperExchangeClient(ExchangeClient):
             return ExchangeOrder(
                 exchange_order_id=exchange_order_id, symbol="", side="",
                 price=0.0, quantity=0.0, filled_quantity=0.0, filled_price=0.0,
-                status=OrderStatus.FILLED.value, raw_status="filled",
+                status=OrderStatus.FILLED.value, raw_status="filled", fee=0.0,
             )
 
         if sim.status == OrderStatus.CANCELLED.value:
@@ -251,6 +263,12 @@ class PaperExchangeClient(ExchangeClient):
         sim.filled_quantity = sim.quantity
         sim.status = OrderStatus.FILLED.value
         return self._to_exchange_order(sim)
+
+    async def get_order_by_client_order_id(self, client_order_id: str) -> ExchangeOrder | None:
+        for sim in self._paper_orders.values():
+            if sim.client_order_id == client_order_id:
+                return self._to_exchange_order(sim)
+        return None
 
     async def close(self) -> None:
         pass

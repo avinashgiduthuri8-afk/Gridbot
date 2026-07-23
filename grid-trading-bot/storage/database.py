@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS orders (
     quantity          REAL NOT NULL DEFAULT 0,
     filled_quantity   REAL NOT NULL DEFAULT 0,
     filled_price      REAL NOT NULL DEFAULT 0,
+    fee               REAL NOT NULL DEFAULT 0,
     status            TEXT NOT NULL DEFAULT 'pending',
     created_at        TEXT NOT NULL,
     updated_at        TEXT NOT NULL,
@@ -178,9 +179,42 @@ async def _migration_002_add_trailing_columns(conn: aiosqlite.Connection) -> Non
         await conn.execute("ALTER TABLE dca_grids ADD COLUMN trailing_peak_price REAL")
 
 
+async def _migration_003_add_idempotent_submission_columns(conn: aiosqlite.Connection) -> None:
+    """Persist the identity and audit state required to reconcile a create.
+
+    Existing historical orders intentionally retain a NULL client_order_id:
+    they were submitted before this protocol existed and must never be matched
+    to a new exchange order by a fabricated identifier.
+    """
+    if not await _column_exists(conn, "orders", "client_order_id"):
+        await conn.execute("ALTER TABLE orders ADD COLUMN client_order_id TEXT")
+    if not await _column_exists(conn, "orders", "reconciliation_status"):
+        await conn.execute(
+            "ALTER TABLE orders ADD COLUMN reconciliation_status TEXT NOT NULL DEFAULT 'not_needed'"
+        )
+    if not await _column_exists(conn, "orders", "reconciliation_retry_count"):
+        await conn.execute(
+            "ALTER TABLE orders ADD COLUMN reconciliation_retry_count INTEGER NOT NULL DEFAULT 0"
+        )
+    await conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_client_order_id "
+        "ON orders(client_order_id) WHERE client_order_id IS NOT NULL"
+    )
+
+
+async def _migration_004_add_order_fee_column(conn: aiosqlite.Connection) -> None:
+    """Persist per-order exchange fees so realised P&L can be net of fees."""
+    if not await _column_exists(conn, "orders", "fee"):
+        await conn.execute(
+            "ALTER TABLE orders ADD COLUMN fee REAL NOT NULL DEFAULT 0"
+        )
+
+
 _MIGRATIONS: list[tuple[int, str, Callable[[aiosqlite.Connection], Awaitable[None]]]] = [
     (1, "Add mode column to dca_grids", _migration_001_add_mode_column),
     (2, "Add trailing take-profit columns to dca_grids", _migration_002_add_trailing_columns),
+    (3, "Add idempotent CoinDCX order submission fields", _migration_003_add_idempotent_submission_columns),
+    (4, "Add per-order fee column", _migration_004_add_order_fee_column),
 ]
 
 

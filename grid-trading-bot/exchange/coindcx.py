@@ -106,7 +106,9 @@ class CoinDCXClient(ExchangeClient):
         signature = hmac.new(self._api_secret, payload.encode(), hashlib.sha256).hexdigest()
         return payload, signature
 
-    async def _post_private(self, path: str, body: dict[str, Any] | None = None) -> Any:
+    async def _post_private(
+        self, path: str, body: dict[str, Any] | None = None, *, retry: bool = True,
+    ) -> Any:
         body = dict(body or {})
         body["timestamp"] = int(time.time() * 1000)
         payload, signature = self._sign(body)
@@ -115,13 +117,27 @@ class CoinDCXClient(ExchangeClient):
             "X-AUTH-APIKEY": self._api_key,
             "X-AUTH-SIGNATURE": signature,
         }
-        return await self._request("POST", path, content=payload, headers=headers)
+        return await self._request("POST", path, content=payload, headers=headers, retry=retry)
 
     async def _get_public(self, path: str, params: dict[str, Any] | None = None) -> Any:
         return await self._request("GET", path, params=params)
 
+    async def _request(self, method: str, path: str, *, retry: bool = True, **kwargs: Any) -> Any:
+        """Retry only requests that are safe to repeat.
+
+        ``/orders/create`` uses ``retry=False``: a timeout may be an accepted
+        exchange order, so its only safe follow-up is reconciliation by
+        client_order_id.
+        """
+        if retry:
+            return await self._request_retryable(method, path, **kwargs)
+        return await self._request_once(method, path, **kwargs)
+
     @_retry_policy()
-    async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+    async def _request_retryable(self, method: str, path: str, **kwargs: Any) -> Any:
+        return await self._request_once(method, path, **kwargs)
+
+    async def _request_once(self, method: str, path: str, **kwargs: Any) -> Any:
         try:
             response = await self._client.request(method, path, **kwargs)
         except httpx.TimeoutException as exc:
@@ -351,6 +367,7 @@ class CoinDCXClient(ExchangeClient):
         price: float,
         quantity: float,
         order_type: str = "limit_order",
+        client_order_id: str | None = None,
     ) -> ExchangeOrder:
         body: dict[str, Any] = {
             "side": side.value,
@@ -360,7 +377,9 @@ class CoinDCXClient(ExchangeClient):
         }
         if order_type == "limit_order":
             body["price_per_unit"] = price
-        data = await self._post_private("/exchange/v1/orders/create", body)
+        if client_order_id:
+            body["client_order_id"] = client_order_id
+        data = await self._post_private("/exchange/v1/orders/create", body, retry=False)
         orders = data.get("orders", [data]) if isinstance(data, dict) else data
         order = orders[0] if orders else data
         return self._parse_order(order)
@@ -378,6 +397,18 @@ class CoinDCXClient(ExchangeClient):
         order = data.get("orders", [data])[0] if isinstance(data, dict) and "orders" in data else data
         return self._parse_order(order)
 
+    async def get_order_by_client_order_id(self, client_order_id: str) -> ExchangeOrder | None:
+        """Authoritatively reconcile a non-retried submission through CoinDCX."""
+        try:
+            data = await self._post_private(
+                "/exchange/v1/orders/status", {"client_order_id": client_order_id}
+            )
+        except OrderRejectedError:
+            return None
+        order = data.get("orders", [data])[0] if isinstance(data, dict) and "orders" in data else data
+        parsed = self._parse_order(order)
+        return parsed if parsed.exchange_order_id else None
+
     async def get_open_orders(self, symbol: str | None = None) -> list[ExchangeOrder]:
         body: dict[str, Any] = {}
         if symbol:
@@ -386,7 +417,12 @@ class CoinDCXClient(ExchangeClient):
         orders = data.get("orders", []) if isinstance(data, dict) else data
         return [self._parse_order(o) for o in orders]
 
-    async def get_trade_history(self, symbol: str | None = None, limit: int = 50) -> list[Trade]:
+    async def get_trade_history(
+        self,
+        symbol: str | None = None,
+        limit: int = 50,
+        order_id: str | None = None,
+    ) -> list[Trade]:
         body: dict[str, Any] = {"limit": limit}
         if symbol:
             body["market"] = symbol
@@ -394,9 +430,12 @@ class CoinDCXClient(ExchangeClient):
         trades = data if isinstance(data, list) else data.get("trades", [])
         result: list[Trade] = []
         for t in trades:
+            trade_order_id = str(t.get("order_id", ""))
+            if order_id and trade_order_id != order_id:
+                continue
             result.append(
                 Trade(
-                    exchange_order_id=str(t.get("order_id", "")),
+                    exchange_order_id=trade_order_id,
                     symbol=t.get("market", symbol or ""),
                     side=t.get("side", ""),
                     price=float(t.get("price", 0)),
@@ -425,6 +464,8 @@ class CoinDCXClient(ExchangeClient):
             quantity=float(order.get("total_quantity", 0) or 0),
             filled_quantity=float(order.get("filled_quantity", 0) or 0),
             filled_price=float(order.get("avg_price", 0) or order.get("price_per_unit", 0) or 0),
+            fee=float(order.get("fee_amount", 0) or 0),
             status=_STATUS_MAP.get(raw_status, OrderStatus.OPEN.value),
             raw_status=raw_status,
+            client_order_id=str(order.get("client_order_id", "") or ""),
         )

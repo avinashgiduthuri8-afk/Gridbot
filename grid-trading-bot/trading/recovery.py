@@ -2,10 +2,9 @@
 
 Recovery sequence
 -----------------
-1. SUBMITTED orders with no exchange_order_id
-   These represent orders whose HTTP request was in-flight when the process
-   crashed.  We query the exchange for open orders on the same symbol+side
-   and link any plausible match.  Unmatched ones are marked FAILED.
+1. SUBMITTED/UNKNOWN orders with no exchange_order_id
+   These are reconciled solely by their immutable client_order_id. Unmatched
+   ones remain UNKNOWN and are never submitted again.
 
 2. PENDING orders with no exchange_order_id
    The DB record was written but the exchange call never started → FAILED.
@@ -23,8 +22,6 @@ Recovery sequence
 
 from __future__ import annotations
 
-import math
-
 from config.constants import GridStatus, OrderStatus
 from exchange.base import ExchangeClient, ExchangeOrder
 from exchange.exceptions import ExchangeError
@@ -41,18 +38,6 @@ _TERMINAL = {
     OrderStatus.EXPIRED.value,
     OrderStatus.FAILED.value,
 }
-
-# Match tolerances for linking SUBMITTED orders to exchange open orders
-_QTY_MATCH_TOLERANCE = 0.02    # 2% qty difference allowed
-_PRICE_MATCH_TOLERANCE = 0.05  # 5% price difference allowed (market orders vary)
-
-
-def _qty_matches(expected: float, actual: float) -> bool:
-    """True if actual is within qty tolerance of expected (and both are > 0)."""
-    if expected <= 0 or actual <= 0:
-        return False
-    return abs(actual - expected) / expected <= _QTY_MATCH_TOLERANCE
-
 
 class RecoveryManager:
     def __init__(
@@ -111,84 +96,43 @@ class RecoveryManager:
     async def _reconcile_submitted_orders(self) -> int:
         """Handle orders that were in-flight when the process crashed.
 
-        Matching uses multi-factor criteria: side + qty tolerance + price tolerance.
-        Ambiguous results (zero or multiple candidates) are never linked — the order
-        is marked FAILED and the grid can re-enter on the next price trigger.
+        Matching uses CoinDCX's client_order_id, never price/quantity heuristics.
         """
-        submitted = await self._repos.orders.list_submitted_no_exchange_id()
+        submitted = await self._repos.orders.list_needing_reconciliation()
         reconciled = 0
         for order in submitted:
             order_id = order["order_id"]
-            symbol = order["symbol"]
-            side = order["side"]
-            qty = float(order["quantity"])
-            price = float(order["price"])
-
-            log.info(
-                "Recovery: SUBMITTED order %s (%s %s qty=%.8f @ %.4f) — checking exchange",
-                order_id, side, symbol, qty, price,
-            )
-
-            # Query exchange for open orders on this symbol
+            client_order_id = order.get("client_order_id")
+            if not client_order_id:
+                # Pre-protocol records cannot be safely attributed by a fuzzy
+                # price/quantity match. Preserve them for manual investigation.
+                await self._repos.orders.mark_unknown(order_id, "legacy_missing_client_order_id")
+                log.error("Recovery: order %s has no client_order_id; retained UNKNOWN", order_id)
+                continue
             try:
-                exchange_open = await self._exchange.get_open_orders(symbol=symbol)
+                match = await self._exchange.get_order_by_client_order_id(client_order_id)
             except ExchangeError as exc:
                 log.warning(
-                    "Recovery: cannot query exchange for SUBMITTED order %s: %s",
+                    "Recovery: cannot reconcile UNKNOWN order %s: %s",
                     order_id, exc,
                 )
                 continue
-
-            # Multi-factor match: side + qty tolerance + price tolerance
-            # Price check is skipped for market orders (price == 0 locally)
-            candidates: list[ExchangeOrder] = []
-            for ex_o in exchange_open:
-                ex_side = ex_o.side if isinstance(ex_o.side, str) else ex_o.side.value
-                ex_qty = float(ex_o.quantity or 0)
-                ex_price = float(ex_o.price or 0)
-
-                if ex_side != side:
-                    continue
-                if not _qty_matches(qty, ex_qty):
-                    continue
-                # Only apply price check when both sides have a non-zero price
-                if price > 0 and ex_price > 0:
-                    price_diff_pct = abs(ex_price - price) / price
-                    if price_diff_pct > _PRICE_MATCH_TOLERANCE:
-                        continue
-                candidates.append(ex_o)
-
-            if len(candidates) == 1:
-                match = candidates[0]
+            if match is not None:
                 await self._repos.orders.update_status(
                     order_id,
                     match.status,
                     exchange_order_id=match.exchange_order_id,
                     filled_quantity=match.filled_quantity,
                     filled_price=match.filled_price,
+                    reconciliation_status="resolved",
                 )
                 log.info(
-                    "Recovery: linked SUBMITTED order %s → exchange %s (status=%s)",
+                    "Recovery: linked order %s by client_order_id → exchange %s (status=%s)",
                     order_id, match.exchange_order_id, match.status,
                 )
-            elif len(candidates) > 1:
-                # Ambiguous: multiple open orders match our criteria.
-                # Refuse to link rather than risk mis-attribution.
-                await self._repos.orders.update_status(order_id, OrderStatus.FAILED.value)
-                log.warning(
-                    "Recovery: AMBIGUOUS match for SUBMITTED order %s "
-                    "(%s %s qty=%.8f) — %d candidates, marked FAILED",
-                    order_id, side, symbol, qty, len(candidates),
-                )
             else:
-                # No match — order never reached the exchange or filled instantly.
-                # Mark FAILED so the grid can re-enter on the next price trigger.
-                await self._repos.orders.update_status(order_id, OrderStatus.FAILED.value)
-                log.warning(
-                    "Recovery: no exchange match for SUBMITTED order %s "
-                    "(%s %s qty=%.8f) — marked FAILED",
-                    order_id, side, symbol, qty,
-                )
+                await self._repos.orders.mark_unknown(order_id, "not_found_yet")
+                log.warning("Recovery: order %s still UNKNOWN; it will be reconciled again", order_id)
             reconciled += 1
 
         return reconciled
@@ -229,11 +173,30 @@ class RecoveryManager:
             try:
                 ex_order = await self._exchange.get_order_status(order["exchange_order_id"])
             except ExchangeError as exc:
-                log.warning(
-                    "Recovery: cannot fetch exchange status for order %s: %s",
-                    order_id, exc,
+                # The order id is itself authoritative, so trade history is a
+                # safe last-resort recovery source. Never match on symbol/side
+                # alone: another manual trade could look identical.
+                try:
+                    trades = await self._exchange.get_trade_history(order["symbol"], limit=500)
+                except ExchangeError:
+                    log.warning("Recovery: cannot fetch status or trade history for %s: %s", order_id, exc)
+                    continue
+                matched = [t for t in trades if t.exchange_order_id == order["exchange_order_id"]]
+                if not matched:
+                    log.warning("Recovery: exchange status unavailable and no trade history for %s", order_id)
+                    continue
+                filled_qty = sum(t.quantity for t in matched)
+                filled_value = sum(t.quantity * t.price for t in matched)
+                ex_order = ExchangeOrder(
+                    exchange_order_id=order["exchange_order_id"], symbol=order["symbol"], side=order["side"],
+                    price=float(order["price"]), quantity=float(order["quantity"]),
+                    filled_quantity=filled_qty,
+                    filled_price=(filled_value / filled_qty) if filled_qty else 0.0,
+                    status=(OrderStatus.FILLED.value if filled_qty >= float(order["quantity"]) else OrderStatus.PARTIALLY_FILLED.value),
+                    raw_status="trade_history_reconciled",
+                    client_order_id=order.get("client_order_id") or "",
                 )
-                continue
+                log.warning("Recovery: reconstructed order %s from authoritative trade history", order_id)
 
             if ex_order.status != order["status"] or \
                ex_order.filled_quantity != order["filled_quantity"]:

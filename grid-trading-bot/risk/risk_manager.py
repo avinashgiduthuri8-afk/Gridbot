@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from config.constants import GridStatus
 from config.settings import RiskSettings
 from storage.repositories import Repositories
 from utils.logger import get_logger
@@ -65,7 +66,9 @@ class RiskManager:
         if self._emergency_stop:
             return RiskCheckResult(False, "Emergency stop is active. Resume manually to continue.")
 
-        active_grids = await self._repos.grids.list_by_status(["active", "paused"])
+        active_grids = await self._repos.grids.list_by_status(
+            [GridStatus.ACTIVE.value, GridStatus.PAUSED.value]
+        )
 
         if len(active_grids) >= self._settings.max_simultaneous_grids:
             return RiskCheckResult(
@@ -73,9 +76,9 @@ class RiskManager:
                 f"Maximum simultaneous grids reached ({self._settings.max_simultaneous_grids}).",
             )
 
-        for grid in active_grids:
-            if grid["symbol"] == symbol:
-                return RiskCheckResult(False, f"A grid for {symbol} is already running.")
+        active_grid = await self._repos.grids.get_active_by_symbol(symbol)
+        if active_grid is not None:
+            return RiskCheckResult(False, f"A grid for {symbol} is already running.")
 
         if planned_investment > self._settings.max_capital_per_coin:
             return RiskCheckResult(

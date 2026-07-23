@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from config.constants import GridStatus
 from config.settings import RiskSettings
 from risk.risk_manager import RiskManager
 from utils.helpers import now_iso
@@ -11,12 +12,16 @@ from storage.models import DCAGridRecord
 from utils.helpers import new_id
 
 
-def _make_grid(symbol: str, total_investment: float = 0.0) -> DCAGridRecord:
+def _make_grid(
+    symbol: str,
+    total_investment: float = 0.0,
+    status: str = GridStatus.ACTIVE.value,
+) -> DCAGridRecord:
     now = now_iso()
     return DCAGridRecord(
         grid_id=new_id("grd"),
         symbol=symbol,
-        status="active",
+        status=status,
         entry_price=54000.0,
         base_investment=500.0,
         dip_buy_amount=100.0,
@@ -76,12 +81,33 @@ async def test_rejects_when_wallet_balance_too_low(repos, risk_settings):
 
 @pytest.mark.anyio
 async def test_rejects_duplicate_symbol(repos, risk_settings):
-    grid = _make_grid("BTCINR")
+    grid = _make_grid("BTCINR", status=GridStatus.ACTIVE.value)
     await repos.grids.create(grid)
     manager = RiskManager(risk_settings, repos)
     result = await manager.check_can_start_grid("BTCINR", 500, wallet_inr_balance=5000)
     assert not result.allowed
     assert "already running" in result.reason
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "status, should_block",
+    [
+        (GridStatus.PAUSED.value, True),
+        (GridStatus.STOPPED.value, False),
+        (GridStatus.COMPLETED.value, False),
+        ("failed", False),
+        ("cancelled", False),
+    ],
+)
+async def test_only_active_and_paused_grids_block_duplicates(
+    repos, risk_settings, status, should_block
+):
+    grid = _make_grid("BTCINR", status=status)
+    await repos.grids.create(grid)
+    manager = RiskManager(risk_settings, repos)
+    result = await manager.check_can_start_grid("BTCINR", 500, wallet_inr_balance=5000)
+    assert result.allowed is (not should_block), f"status {status} should {'block' if should_block else 'not block'} a new grid"
 
 
 @pytest.mark.anyio
@@ -115,6 +141,17 @@ async def test_rejects_when_total_capital_exceeded(repos):
     result = await manager.check_can_start_grid("SOLINR", 2000, wallet_inr_balance=5000)
     assert not result.allowed
     assert "Total capital limit" in result.reason
+
+
+@pytest.mark.anyio
+async def test_stopped_grids_do_not_count_toward_duplicate_limit(repos, risk_settings):
+    for idx in range(3):
+        await repos.grids.create(_make_grid(f"BTC{idx}INR", status=GridStatus.STOPPED.value))
+    await repos.grids.create(_make_grid("ETHINR", status=GridStatus.ACTIVE.value))
+
+    manager = RiskManager(risk_settings, repos)
+    result = await manager.check_can_start_grid("SOLINR", 500, wallet_inr_balance=5000)
+    assert result.allowed
 
 
 @pytest.mark.anyio
@@ -159,4 +196,4 @@ async def test_emergency_stop_survives_restart(repos, risk_settings):
     await another_restart.load_emergency_stop()
     assert not another_restart.emergency_stopped
     result = await manager.check_can_start_grid("BTCINR", 100, wallet_inr_balance=5000)
-    assert result.allowed
+    assert not result.allowed

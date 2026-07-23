@@ -143,16 +143,19 @@ class OrderRepository:
     async def create(self, order: OrderRecord) -> None:
         await self._db.connection.execute(
             """INSERT INTO orders
-                   (order_id, grid_id, exchange_order_id, symbol, side,
+                   (order_id, grid_id, exchange_order_id, client_order_id, symbol, side,
                     order_type, price, quantity, filled_quantity, filled_price,
-                    status, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    fee, status, reconciliation_status, reconciliation_retry_count, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 order.order_id, order.grid_id, order.exchange_order_id,
+                order.client_order_id,
                 order.symbol, order.side, order.order_type,
                 order.price, order.quantity,
                 order.filled_quantity, order.filled_price,
-                order.status, order.created_at, order.updated_at,
+                order.fee,
+                order.status, order.reconciliation_status, order.reconciliation_retry_count,
+                order.created_at, order.updated_at,
             ),
         )
         await self._db.connection.commit()
@@ -165,10 +168,10 @@ class OrderRepository:
         return _row(row) if row else None
 
     async def list_open(self) -> list[dict[str, Any]]:
-        """All non-terminal orders (PENDING, SUBMITTED, OPEN, PARTIALLY_FILLED)."""
+        """All non-terminal orders, including uncertain submissions."""
         cur = await self._db.connection.execute(
             "SELECT * FROM orders WHERE status IN "
-            "('pending','submitted','open','partially_filled')"
+            "('pending','submitted','unknown','open','partially_filled')"
         )
         rows = await cur.fetchall()
         return [_row(r) for r in rows]
@@ -184,6 +187,13 @@ class OrderRepository:
         row = await cur.fetchone()
         return _row(row) if row else None
 
+    async def get_by_client_order_id(self, client_order_id: str) -> dict[str, Any] | None:
+        cur = await self._db.connection.execute(
+            "SELECT * FROM orders WHERE client_order_id = ?", (client_order_id,)
+        )
+        row = await cur.fetchone()
+        return _row(row) if row else None
+
     async def list_for_grid(self, grid_id: str) -> list[dict[str, Any]]:
         cur = await self._db.connection.execute(
             "SELECT * FROM orders WHERE grid_id = ? ORDER BY created_at DESC",
@@ -195,22 +205,24 @@ class OrderRepository:
     async def list_pending_for_grid(self, grid_id: str) -> list[dict[str, Any]]:
         cur = await self._db.connection.execute(
             """SELECT * FROM orders WHERE grid_id = ?
-               AND status IN ('pending','submitted','open','partially_filled')""",
+               AND status IN ('pending','submitted','unknown','open','partially_filled')""",
             (grid_id,),
         )
         rows = await cur.fetchall()
         return [_row(r) for r in rows]
 
-    async def list_submitted_no_exchange_id(self) -> list[dict[str, Any]]:
-        """Orders in SUBMITTED state that never received an exchange_order_id.
-        These represent in-flight calls that may or may not have reached the exchange.
-        """
+    async def list_needing_reconciliation(self) -> list[dict[str, Any]]:
+        """Uncertain creates. These are never re-submitted by this process."""
         cur = await self._db.connection.execute(
             """SELECT * FROM orders
-               WHERE status = 'submitted' AND exchange_order_id IS NULL"""
+               WHERE status IN ('submitted', 'unknown') AND exchange_order_id IS NULL"""
         )
         rows = await cur.fetchall()
         return [_row(r) for r in rows]
+
+    async def list_submitted_no_exchange_id(self) -> list[dict[str, Any]]:
+        """Backward-compatible alias for callers upgraded with migration 003."""
+        return await self.list_needing_reconciliation()
 
     async def count_pending_side(self, grid_id: str, side: str) -> int:
         """Count non-terminal orders for a given grid and side.
@@ -219,7 +231,7 @@ class OrderRepository:
         cur = await self._db.connection.execute(
             """SELECT COUNT(*) AS cnt FROM orders
                WHERE grid_id = ? AND side = ?
-               AND status IN ('pending','submitted','open','partially_filled')""",
+                AND status IN ('pending','submitted','unknown','open','partially_filled')""",
             (grid_id, side),
         )
         row = await cur.fetchone()
@@ -243,6 +255,8 @@ class OrderRepository:
         exchange_order_id: str | None = None,
         filled_quantity: float | None = None,
         filled_price: float | None = None,
+        fee: float | None = None,
+        reconciliation_status: str | None = None,
     ) -> None:
         fields = ["status = ?", "updated_at = ?"]
         params: list[Any] = [status, now_iso()]
@@ -255,9 +269,27 @@ class OrderRepository:
         if filled_price is not None:
             fields.append("filled_price = ?")
             params.append(filled_price)
+        if fee is not None:
+            fields.append("fee = ?")
+            params.append(fee)
+        if reconciliation_status is not None:
+            fields.append("reconciliation_status = ?")
+            params.append(reconciliation_status)
         params.append(order_id)
         await self._db.connection.execute(
             f"UPDATE orders SET {', '.join(fields)} WHERE order_id = ?", params
+        )
+        await self._db.connection.commit()
+
+    async def mark_unknown(self, order_id: str, reason: str) -> None:
+        """Record an ambiguous create attempt without ever creating another order."""
+        await self._db.connection.execute(
+            """UPDATE orders
+               SET status = 'unknown', reconciliation_status = ?,
+                   reconciliation_retry_count = reconciliation_retry_count + 1,
+                   updated_at = ?
+               WHERE order_id = ?""",
+            (reason, now_iso(), order_id),
         )
         await self._db.connection.commit()
 

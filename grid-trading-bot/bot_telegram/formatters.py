@@ -5,6 +5,16 @@ from __future__ import annotations
 from utils.helpers import fmt_price
 
 
+def _pnl_pct(pnl: float, invested: float) -> float:
+    if invested <= 0:
+        return 0.0
+    return (pnl / invested) * 100
+
+
+def _format_pnl_with_pct(pnl: float, invested: float) -> str:
+    return f"₹{pnl:+,.2f} ({_pnl_pct(pnl, invested):+.2f}%)"
+
+
 def _status_emoji(status: str) -> str:
     return {"active": "🟢", "paused": "⏸", "stopped": "🛑", "completed": "🏁"}.get(status, "❓")
 
@@ -40,7 +50,7 @@ def format_grid_summary(grid: dict) -> str:
         f"Stop loss: {grid['stop_loss_percentage']}%"
         f"{unrealized_note}"
         f"{targets}\n"
-        f"Realized profit: ₹{grid['realized_profit']:,.2f} | Sell cycles: {grid['completed_cycles']}"
+        f"Net realized profit: ₹{grid['realized_profit']:,.2f} | Sell cycles: {grid['completed_cycles']}"
     )
 
 
@@ -254,9 +264,12 @@ def format_grid_list(grids: list[dict]) -> str:
         emoji = _status_emoji(g["status"])
         avg_entry = g["average_entry_price"]
         avg_part = f" | avg ₹{avg_entry:,.2f}" if avg_entry > 0 else ""
+        invested = float(g.get("total_investment") or 0.0)
+        realized = float(g.get("realized_profit") or 0.0)
         lines.append(
             f"{emoji} <b>{g['symbol']}</b> ({g['status']}) — "
-            f"<code>{g['grid_id']}</code>{avg_part} | ₹{g['realized_profit']:,.2f} profit"
+            f"<code>{g['grid_id']}</code>{avg_part} | Realized P&amp;L: "
+            f"{_format_pnl_with_pct(realized, invested)}"
         )
     return "\n".join(lines)
 
@@ -271,19 +284,20 @@ def format_positions(grids: list[dict]) -> str:
             f"• <b>{g['symbol']}</b>: {g['total_quantity']:.8g} coins "
             f"@ avg {fmt_price(g['average_entry_price'])} "
             f"(invested ₹{g['total_investment']:,.2f}) "
+            f"| Net realized P&amp;L: ₹{g['realized_profit']:,.2f} "
             f"<code>{g['grid_id']}</code>"
         )
     return "\n".join(lines)
 
 
 def format_profit_summary(grids: list[dict], total_realized: float) -> str:
-    lines = [f"<b>💰 Total Realized Profit:</b> ₹{total_realized:,.2f}\n"]
+    lines = [f"<b>💰 Total Net Profit:</b> ₹{total_realized:,.2f}\n"]
     if not grids:
         lines.append("No grids yet.")
     for g in grids:
         emoji = _status_emoji(g["status"])
         lines.append(
-            f"{emoji} <b>{g['symbol']}</b>: ₹{g['realized_profit']:,.2f} "
+            f"{emoji} <b>{g['symbol']}</b>: net ₹{g['realized_profit']:,.2f} "
             f"({g['completed_cycles']} sell cycle(s)) — {g['status']}"
         )
     return "\n".join(lines)
@@ -301,8 +315,8 @@ def format_daily_summary(
 
     lines = [
         f"<b>Date:</b> {date}",
-        f"{pnl_emoji} <b>Today's realized P&amp;L:</b> ₹{today_pnl:,.2f} ({today_trades} trade(s))",
-        f"<b>Lifetime realized profit:</b> ₹{lifetime_realized:,.2f}",
+        f"{pnl_emoji} <b>Today's net P&amp;L:</b> ₹{today_pnl:,.2f} ({today_trades} trade(s))",
+        f"<b>Lifetime net profit:</b> ₹{lifetime_realized:,.2f}",
         f"<b>Active/paused grids:</b> {len(active_grids)}",
     ]
     if active_grids:
@@ -312,7 +326,7 @@ def format_daily_summary(
             avg_part = f" avg ₹{avg:,.2f}" if avg > 0 else ""
             lines.append(
                 f"• <b>{g['symbol']}</b> ({g['status']}) lvl {g['current_level']}/{g['max_levels']}"
-                f"{avg_part} — ₹{g['realized_profit']:,.2f} profit"
+                f"{avg_part} — net ₹{g['realized_profit']:,.2f} profit"
             )
     return "\n".join(lines)
 
@@ -323,11 +337,13 @@ def format_trade_history(symbol: str, trades: list[dict]) -> str:
     lines = [f"<b>Recent Trades — {symbol}</b>\n"]
     for t in trades:
         side = t["side"].upper()
-        pnl_part = f" | pnl ₹{t['pnl']:+,.2f}" if t["side"] == "sell" else ""
+        pnl_part = (
+            f" | net pnl ₹{t['pnl']:+,.2f}" if t["side"] == "sell" else ""
+        )
         ts = str(t["executed_at"])[:19].replace("T", " ")
         lines.append(
             f"• [{ts}] {side} {t['quantity']:.8g} @ {fmt_price(t['price'])}"
-            f" (₹{t['investment_inr']:,.2f}){pnl_part}"
+            f" (₹{t['investment_inr']:,.2f}) | fee ₹{t['fee']:,.2f}{pnl_part}"
         )
     return "\n".join(lines)
 
@@ -343,6 +359,7 @@ def format_paper_grids(grids: list[dict], prices: dict[str, float]) -> str:
 
     total_realized = sum(g["realized_profit"] for g in paper)
     total_unrealized = 0.0
+    total_invested = sum(float(g.get("total_investment") or 0.0) for g in paper)
 
     lines = ["<b>🟢 Paper Trade Grids</b>\n"]
 
@@ -354,6 +371,7 @@ def format_paper_grids(grids: list[dict], prices: dict[str, float]) -> str:
         avg = g["average_entry_price"]
         realized = g["realized_profit"]
         cycles = g["completed_cycles"]
+        invested = float(g.get("total_investment") or 0.0)
 
         unrealized = 0.0
         price_note = ""
@@ -362,19 +380,19 @@ def format_paper_grids(grids: list[dict], prices: dict[str, float]) -> str:
             if current:
                 unrealized = (current - avg) * qty
                 total_unrealized += unrealized
-                direction = "📈" if unrealized >= 0 else "📉"
                 price_note = (
                     f"\n    Current: ₹{current:,.2f} | "
-                    f"Unrealized: {direction} ₹{unrealized:+,.2f}"
+                    f"Unrealized: {_format_pnl_with_pct(unrealized, invested)}"
                 )
 
-        realized_note = f"₹{realized:+,.2f}" if realized != 0 else "₹0.00"
+        combined = realized + unrealized
         lines.append(
             f"{emoji} <b>{symbol}</b> — <code>{g['grid_id']}</code>\n"
             f"    Status: {status.upper()} | Level: {g['current_level']}/{g['max_levels']}\n"
             f"    Entry: ₹{g['entry_price']:,.2f} | Dip: {g['dip_percentage']}% | "
             f"Profit: {g['profit_percentage']}%\n"
-            f"    Realized P&amp;L: {realized_note} ({cycles} sell cycle(s))"
+            f"    Net realized P&amp;L: {_format_pnl_with_pct(realized, invested)} ({cycles} sell cycle(s))\n"
+            f"    Net total P&amp;L: {_format_pnl_with_pct(combined, invested)}"
             + (
                 f"\n    Holding: {qty:.6f} coins @ avg ₹{avg:,.2f}"
                 + price_note
@@ -384,13 +402,11 @@ def format_paper_grids(grids: list[dict], prices: dict[str, float]) -> str:
 
     lines.append("")
     lines.append("<b>── Paper Portfolio Totals ──</b>")
-    lines.append(f"Realized P&amp;L:   ₹{total_realized:+,.2f}")
-    if total_unrealized != 0:
-        direction = "📈" if total_unrealized >= 0 else "📉"
-        lines.append(f"Unrealized P&amp;L: {direction} ₹{total_unrealized:+,.2f}")
-        lines.append(
-            f"Combined P&amp;L:   ₹{(total_realized + total_unrealized):+,.2f}"
-        )
+    combined_total = total_realized + total_unrealized
+    lines.append(f"Net realized P&amp;L:   {_format_pnl_with_pct(total_realized, total_invested)}")
+    lines.append(f"Net unrealized P&amp;L: {_format_pnl_with_pct(total_unrealized, total_invested)}")
+    lines.append(f"Net combined P&amp;L:   {_format_pnl_with_pct(combined_total, total_invested)}")
+    lines.append(f"Portfolio Return:  {_pnl_pct(combined_total, total_invested):+.2f}%")
     lines.append(f"\nGrids: {len(paper)} total | {sum(1 for g in paper if g['status'] == 'active')} active")
 
     return "\n".join(lines)

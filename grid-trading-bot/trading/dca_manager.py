@@ -580,13 +580,44 @@ class DCAManager:
             actual_qty = fill_qty if fill_qty > 0 else order["quantity"]
 
             if order["side"] == "buy":
-                await self._on_buy_filled(grid, order_id, actual_price, actual_qty)
+                await self._on_buy_filled(grid, order, order_id, actual_price, actual_qty)
             else:
-                await self._on_sell_filled(grid, order_id, actual_price, actual_qty)
+                await self._on_sell_filled(grid, order, order_id, actual_price, actual_qty)
 
     # ------------------------------------------------------------------
     # Private: order execution helpers
     # ------------------------------------------------------------------
+
+    async def _resolve_fill_fee(self, order: dict) -> float:
+        fee = float(order.get("fee") or 0.0)
+        if fee > 0:
+            return fee
+
+        exchange_order_id = order.get("exchange_order_id")
+        if not exchange_order_id:
+            return 0.0
+
+        try:
+            trades = await self._exchange.get_trade_history(
+                symbol=order["symbol"],
+                limit=500,
+                order_id=exchange_order_id,
+            )
+        except ExchangeError as exc:
+            log.warning(
+                "Could not resolve fee for order %s via trade history: %s",
+                order["order_id"], exc,
+            )
+            return 0.0
+
+        resolved = sum(float(t.fee or 0.0) for t in trades if t.exchange_order_id == exchange_order_id)
+        if resolved > 0:
+            await self._repos.orders.update_status(
+                order["order_id"],
+                order["status"],
+                fee=resolved,
+            )
+        return resolved if resolved > 0 else 0.0
 
     async def _execute_dip_buy(self, grid: dict, current_price: float) -> None:
         grid_id: str = grid["grid_id"]
@@ -908,14 +939,16 @@ class DCAManager:
     # ------------------------------------------------------------------
 
     async def _on_buy_filled(
-        self, grid: dict, order_id: str, fill_price: float, fill_qty: float
+        self, grid: dict, order: dict, order_id: str, fill_price: float, fill_qty: float
     ) -> None:
         grid_id = grid["grid_id"]
         symbol = grid["symbol"]
+        fee = await self._resolve_fill_fee(order)
         investment_inr = fill_qty * fill_price
+        total_buy_cost = investment_inr + fee
 
         new_total_inv, new_total_qty, new_avg = update_position_after_buy(
-            grid["total_investment"], grid["total_quantity"], investment_inr, fill_qty
+            grid["total_investment"], grid["total_quantity"], total_buy_cost, fill_qty
         )
         new_level = grid["current_level"] + 1
         new_next_buy = calculate_next_buy_price(fill_price, grid["dip_percentage"])
@@ -931,6 +964,11 @@ class DCAManager:
             next_buy_price=new_next_buy,
             next_sell_price=new_next_sell,
         )
+        await self._repos.orders.update_status(
+            order_id,
+            order["status"],
+            fee=fee,
+        )
 
         trade_id = new_id("trd")
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -943,8 +981,8 @@ class DCAManager:
                 side="buy",
                 price=fill_price,
                 quantity=fill_qty,
-                investment_inr=investment_inr,
-                fee=0.0,
+                investment_inr=total_buy_cost,
+                fee=fee,
                 pnl=0.0,
                 executed_at=now_iso(),
             )
@@ -967,17 +1005,18 @@ class DCAManager:
                 level=new_level,
                 quantity=fill_qty,
                 buy_price=fill_price,
-                investment_inr=investment_inr,
+                investment_inr=total_buy_cost,
                 avg_entry_price=new_avg,
                 next_buy_price=new_next_buy,
                 next_sell_price=new_next_sell,
             )
 
     async def _on_sell_filled(
-        self, grid: dict, order_id: str, fill_price: float, fill_qty: float
+        self, grid: dict, order: dict, order_id: str, fill_price: float, fill_qty: float
     ) -> None:
         grid_id = grid["grid_id"]
         symbol = grid["symbol"]
+        fee = await self._resolve_fill_fee(order)
 
         new_total_inv, new_total_qty, pnl, avg_entry = update_position_after_sell(
             grid["total_investment"],
@@ -986,7 +1025,8 @@ class DCAManager:
             fill_qty,
             fill_price,
         )
-        new_realized = grid["realized_profit"] + pnl
+        net_pnl = pnl - fee
+        new_realized = grid["realized_profit"] + net_pnl
         new_cycles = grid["completed_cycles"] + 1
         proceeds_inr = fill_qty * fill_price
 
@@ -1007,6 +1047,11 @@ class DCAManager:
             completed_cycles=new_cycles,
             next_sell_price=new_next_sell,
         )
+        await self._repos.orders.update_status(
+            order_id,
+            order["status"],
+            fee=fee,
+        )
 
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         await self._repos.trade_history.record(
@@ -1018,17 +1063,17 @@ class DCAManager:
                 side="sell",
                 price=fill_price,
                 quantity=fill_qty,
-                investment_inr=proceeds_inr,
-                fee=0.0,
-                pnl=pnl,
+                investment_inr=max(0.0, proceeds_inr - fee),
+                fee=fee,
+                pnl=net_pnl,
                 executed_at=now_iso(),
             )
         )
-        await self._repos.daily_stats.add_trade(today, pnl)
+        await self._repos.daily_stats.add_trade(today, net_pnl)
 
         log.info(
-            "Sell filled %s: qty %.8f @ ₹%.2f pnl ₹%.2f (total realized ₹%.2f)",
-            grid_id, fill_qty, fill_price, pnl, new_realized,
+            "Sell filled %s: qty %.8f @ ₹%.2f pnl ₹%.2f fee ₹%.2f (net ₹%.2f total realized ₹%.2f)",
+            grid_id, fill_qty, fill_price, pnl, fee, net_pnl, new_realized,
         )
 
         await self._notifier.profit_sell_executed(
@@ -1037,7 +1082,7 @@ class DCAManager:
             quantity=fill_qty,
             sell_price=fill_price,
             avg_entry_price=avg_entry,
-            pnl=pnl,
+            pnl=net_pnl,
             total_realized=new_realized,
             cycles=new_cycles,
             next_sell_price=new_next_sell,

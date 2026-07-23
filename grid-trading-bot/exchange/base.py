@@ -100,6 +100,8 @@ class ExchangeOrder:
     filled_price: float
     status: str
     raw_status: str
+    fee: float = 0.0
+    client_order_id: str = ""
 
 
 @dataclass
@@ -168,7 +170,15 @@ class ExchangeClient(ABC):
         price: float,
         quantity: float,
         order_type: str = "limit_order",
+        client_order_id: str | None = None,
     ) -> ExchangeOrder: ...
+
+    async def get_order_by_client_order_id(self, client_order_id: str) -> ExchangeOrder | None:
+        """Find an order by its immutable client id without fuzzy matching."""
+        for order in await self.get_open_orders():
+            if order.client_order_id == client_order_id:
+                return order
+        return None
 
     @abstractmethod
     async def cancel_order(self, exchange_order_id: str) -> bool: ...
@@ -180,7 +190,12 @@ class ExchangeClient(ABC):
     async def get_open_orders(self, symbol: str | None = None) -> list[ExchangeOrder]: ...
 
     @abstractmethod
-    async def get_trade_history(self, symbol: str | None = None, limit: int = 50) -> list[Trade]: ...
+    async def get_trade_history(
+        self,
+        symbol: str | None = None,
+        limit: int = 50,
+        order_id: str | None = None,
+    ) -> list[Trade]: ...
 
     @abstractmethod
     async def close(self) -> None: ...

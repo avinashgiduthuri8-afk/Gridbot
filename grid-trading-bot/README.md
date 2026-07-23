@@ -46,6 +46,21 @@ bot only manages the position's order lifecycle.
   profit updates, errors, recovery on restart) is pushed to you as a
   Telegram notification.
 
+## Exactly-once order submission
+
+Every new CoinDCX order is first written locally with an immutable
+`client_order_id` equal to the bot's `order_id`. The create endpoint is sent
+**once only**—it is never automatically retried. If its response is lost, the
+order enters `UNKNOWN` and the monitor/startup recovery repeatedly queries
+CoinDCX using that same client ID. A missing result remains `UNKNOWN`; the bot
+does not create a replacement order or fuzzy-match by price and quantity.
+
+Recovery first resolves `UNKNOWN` orders by `client_order_id`, then refreshes
+known `exchange_order_id`s; if an order-status query is unavailable, it uses
+trade history only when it contains that exact exchange order ID. CoinDCX's client-order-ID lookup is therefore a
+production dependency: if it is unavailable for a prolonged period, affected
+grids remain safely blocked rather than risking a duplicate trade.
+
 ## Requirements
 
 - Python 3.12+
@@ -215,6 +230,9 @@ build to catch a broken `Dockerfile` before it reaches a real deployment.
     investment, dip-buy amount/percentage, profit-sell amount/percentage, max
     levels, stop-loss percentage, optional trailing take-profit, and
     paper/real mode)
+  - Duplicate protection only blocks symbols that already have an `active` or
+    `paused` grid; `stopped`, `completed`, `failed`, and `cancelled` history
+    rows do not block a fresh grid for the same symbol.
 - `/defaults` — view your saved Default Grid settings, or edit one with
   `/defaults set <field> <value>` (e.g. `/defaults set base_investment 750`,
   or `/defaults set last_mode paper` / `ask`). Saved in SQLite, persists
@@ -242,12 +260,12 @@ build to catch a broken `Dockerfile` before it reaches a real deployment.
 - `/status` — bot health, wallet balance, emergency-stop state
 - `/balance` — current CoinDCX wallet balance
 - `/coininfo <symbol>` — exchange rules for a coin (step size, precision, min notional/quantity)
-- `/paper` — list of paper-mode grids
-- `/grids` — list all grids with quick pause/resume/stop buttons
+- `/paper` — list of paper-mode grids with net realized, unrealized, and combined P&L after exchange fees, plus return percentages
+- `/grids` — list all grids with quick pause/resume/stop buttons and net realized P&L percentages
 - `/positions` — all currently open positions across all grids
-- `/profit` — realized profit per grid and in total
-- `/summary` — today's P&L, lifetime profit, and active grid standings (on demand)
-- `/history <symbol>` — most recent buy/sell fills for a coin, with per-sell P&L and originating grid
+- `/profit` — net profit per grid and in total
+- `/summary` — today's net P&L, lifetime net profit, and active grid standings (on demand)
+- `/history <symbol>` — most recent buy/sell fills for a coin, with per-sell net P&L and originating grid
 - `/monitor` — price/order monitor health (poll interval, degraded state, failure counts)
 - `/export` — download the complete trade history as a CSV file (for offline accounting/tax analysis)
 - `/backup` — download the raw SQLite database file (all grids, configs, and history in one file)
@@ -311,8 +329,8 @@ In addition to real-time push notifications for every grid lifecycle event
 (grid started/stopped/paused, order filled, dip/profit/stop-loss trigger, risk block, errors),
 the bot pushes a periodic Telegram summary covering:
 
-- Today's realized P&L and number of completed trades
-- Lifetime realized profit across all grids
+- Today's net P&L and number of completed trades
+- Lifetime net profit across all grids
 - Count of active/paused grids, with a per-grid profit/cycle breakdown
 
 Controlled by `DAILY_SUMMARY_INTERVAL_SECONDS` in `.env` (default `86400`,

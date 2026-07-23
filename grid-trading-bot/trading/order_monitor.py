@@ -241,7 +241,7 @@ class OrderMonitor:
         # handles them at startup but the monitor may encounter them mid-session
         # if a timeout error arrived after the HTTP request actually landed.
         for order in local_open:
-            if order.get("status") == OrderStatus.SUBMITTED.value and not order.get("exchange_order_id"):
+            if order.get("status") in (OrderStatus.SUBMITTED.value, OrderStatus.UNKNOWN.value) and not order.get("exchange_order_id"):
                 log.info(
                     "exchange_sync: resolving stuck SUBMITTED order %s (%s %s)",
                     order["order_id"], order["side"], order["symbol"],

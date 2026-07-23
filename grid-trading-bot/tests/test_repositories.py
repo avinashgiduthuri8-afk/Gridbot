@@ -128,6 +128,19 @@ async def test_get_active_by_symbol(repos):
 
 
 @pytest.mark.anyio
+async def test_get_active_by_symbol_ignores_stopped_and_completed(repos):
+    stopped = _make_grid("BTCINR", status="stopped")
+    completed = _make_grid("ETHINR", status="completed")
+    cancelled = _make_grid("SOLINR", status="cancelled")
+    for grid in (stopped, completed, cancelled):
+        await repos.grids.create(grid)
+
+    assert await repos.grids.get_active_by_symbol("BTCINR") is None
+    assert await repos.grids.get_active_by_symbol("ETHINR") is None
+    assert await repos.grids.get_active_by_symbol("SOLINR") is None
+
+
+@pytest.mark.anyio
 async def test_list_all_returns_all(repos):
     for symbol in ["BTCINR", "ETHINR", "SOLINR"]:
         await repos.grids.create(_make_grid(symbol))
@@ -158,10 +171,19 @@ async def test_order_not_listed_after_fill(repos):
     await repos.grids.create(grid)
     order = _make_order(grid.grid_id)
     await repos.orders.create(order)
-    await repos.orders.update_status(order.order_id, "filled", filled_quantity=0.01, filled_price=54100.0)
+    await repos.orders.update_status(
+        order.order_id,
+        "filled",
+        filled_quantity=0.01,
+        filled_price=54100.0,
+        fee=0.25,
+    )
 
     open_orders = await repos.orders.list_open()
     assert len(open_orders) == 0
+
+    stored = await repos.orders.get(order.order_id)
+    assert stored["fee"] == pytest.approx(0.25)
 
 
 @pytest.mark.anyio

@@ -71,6 +71,7 @@ class MockExchange(ExchangeClient):
         self.partial_fill_qty: float | None = None   # triggers PARTIALLY_FILLED
         self.open_orders_override: list[ExchangeOrder] | None = None
         self.status_overrides: dict[str, ExchangeOrder] = {}
+        self.fill_fee: float = 0.0
         self._order_counter: int = 0
         self.market_info_override: "MarketInfo | None" = None
 
@@ -102,6 +103,7 @@ class MockExchange(ExchangeClient):
         price: float,
         quantity: float,
         order_type: str = "market_order",
+        client_order_id: str | None = None,
     ) -> ExchangeOrder:
         if self.place_exception is not None:
             raise self.place_exception
@@ -122,8 +124,10 @@ class MockExchange(ExchangeClient):
                 quantity=quantity,
                 filled_quantity=filled,
                 filled_price=price,
+                fee=self.fill_fee,
                 status=OrderStatus.PARTIALLY_FILLED.value,
                 raw_status="partially_filled",
+                client_order_id=client_order_id or "",
             )
         else:
             order = ExchangeOrder(
@@ -134,8 +138,10 @@ class MockExchange(ExchangeClient):
                 quantity=quantity,
                 filled_quantity=quantity,
                 filled_price=price,
+                fee=self.fill_fee,
                 status=OrderStatus.FILLED.value,
                 raw_status="filled",
+                client_order_id=client_order_id or "",
             )
         self.orders_placed.append(order)
         return order
@@ -164,8 +170,19 @@ class MockExchange(ExchangeClient):
             if o.status in (OrderStatus.OPEN.value, OrderStatus.PARTIALLY_FILLED.value)
         ]
 
-    async def get_trade_history(self, symbol: str | None = None, limit: int = 50) -> list[Trade]:
+    async def get_trade_history(
+        self,
+        symbol: str | None = None,
+        limit: int = 50,
+        order_id: str | None = None,
+    ) -> list[Trade]:
         return []
+
+    async def get_order_by_client_order_id(self, client_order_id: str) -> ExchangeOrder | None:
+        for order in self.orders_placed:
+            if order.client_order_id == client_order_id:
+                return order
+        return None
 
     async def close(self) -> None:
         pass

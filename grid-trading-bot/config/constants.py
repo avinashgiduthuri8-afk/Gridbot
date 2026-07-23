@@ -26,6 +26,7 @@ class OrderSide(str, Enum):
 class OrderStatus(str, Enum):
     PENDING = "pending"            # local record created, exchange call not yet attempted
     SUBMITTED = "submitted"        # exchange call in-flight (crash here → uncertain if landed)
+    UNKNOWN = "unknown"            # delivery/result uncertain; reconcile only, never resubmit
     OPEN = "open"                  # acknowledged by exchange, waiting to fill
     PARTIALLY_FILLED = "partially_filled"
     FILLED = "filled"
