@@ -28,6 +28,7 @@ from bot_telegram.keyboards import (
     grid_action_keyboard,
     main_menu_keyboard,
     manual_trade_confirm_keyboard,
+    restore_confirm_keyboard,
     restorelist_pagination_keyboard,
 )
 from utils.helpers import now_iso
@@ -69,6 +70,9 @@ HELP_TEXT = (
     "/restorelist [page] — browse available Google Drive backups (newest first, 10 per page)\n"
     "/verifybackup &lt;number|latest&gt; — download and verify a backup is intact "
     "and restorable (integrity check + confirms core tables are present)\n"
+    "/restorebackup &lt;number|latest&gt; — stage a full database restore from a "
+    "backup; applies automatically on the next bot restart, never immediately "
+    "(/restorebackup cancel to back out of a staged restore)\n"
     "/logs — recent log entries\n\n"
     "<b>Emergency control</b>\n"
     "/emergencystop — block all new trades immediately\n"
@@ -591,6 +595,27 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
         text, keyboard = _render_restorelist_page(backups, page)
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
 
+    def _resolve_backup_target(backups: list, arg: str) -> tuple[dict | None, str | None]:
+        """Resolve a 'latest' or numeric CLI argument against the same
+        newest-first numbering /restorelist shows. Returns (target, None)
+        on success or (None, error_message) on failure — shared by
+        /verifybackup and /restorebackup so the two can never number
+        backups differently.
+        """
+        newest_first = list(reversed(backups))
+        if arg.lower() == "latest":
+            return newest_first[0], None
+        try:
+            index = int(arg)
+        except ValueError:
+            return None, "Backup number must be an integer, or 'latest'."
+        if not (1 <= index <= len(newest_first)):
+            return None, (
+                f"No backup #{index} — there are {len(newest_first)} backups. "
+                "Use /restorelist to see valid numbers."
+            )
+        return newest_first[index - 1], None
+
     @authorized
     async def verifybackup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not app_context.settings.backup.enabled or app_context.drive_backup_manager is None:
@@ -617,23 +642,10 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
             await update.message.reply_text("📦 No backups found in the Drive folder to verify.")
             return
 
-        newest_first = list(reversed(backups))
-        arg = context.args[0].lower()
-        if arg == "latest":
-            target = newest_first[0]
-        else:
-            try:
-                index = int(context.args[0])
-            except ValueError:
-                await update.message.reply_text("Backup number must be an integer, or 'latest'.")
-                return
-            if not (1 <= index <= len(newest_first)):
-                await update.message.reply_text(
-                    f"No backup #{index} — there are {len(newest_first)} backups. "
-                    "Use /restorelist to see valid numbers."
-                )
-                return
-            target = newest_first[index - 1]
+        target, error = _resolve_backup_target(backups, context.args[0])
+        if error:
+            await update.message.reply_text(error)
+            return
 
         progress_msg = await update.message.reply_text(
             f"⏳ Downloading and verifying <code>{target.get('name', target['id'])}</code>…",
@@ -676,6 +688,113 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
             if result.get("integrity_check") and result["integrity_check"] != "ok":
                 lines.append(f"SQLite integrity check: {result['integrity_check']}")
             await progress_msg.edit_text("\n".join(lines), parse_mode="HTML")
+
+    @authorized
+    async def restorebackup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        from storage.restore import cancel_pending_restore, get_pending_restore
+
+        if not app_context.settings.backup.enabled or app_context.drive_backup_manager is None:
+            await update.message.reply_text("Google Drive backup isn't enabled — nothing to restore from.")
+            return
+
+        if not context.args:
+            pending = get_pending_restore(app_context.settings.database_path)
+            if pending:
+                await update.message.reply_text(
+                    f"⏳ A restore is already staged from <code>{pending.get('source_name')}</code> "
+                    "and will be applied the next time this bot restarts.\n\n"
+                    "Restart now to apply it, or /restorebackup cancel to back out.",
+                    parse_mode="HTML",
+                )
+                return
+            await update.message.reply_text(
+                "Usage: /restorebackup <number|latest>\n"
+                "Use the number shown in /restorelist.\n\n"
+                "⚠️ This replaces your ENTIRE database (all grids, orders, and "
+                "history) with the chosen backup — but only after you restart the "
+                "bot; nothing changes while it's running. Your current database is "
+                "backed up first, automatically.\n\n"
+                "/restorebackup cancel — cancel a pending staged restore"
+            )
+            return
+
+        if context.args[0].lower() == "cancel":
+            cancelled = cancel_pending_restore(app_context.settings.database_path)
+            await update.message.reply_text(
+                "✅ Pending restore cancelled." if cancelled else "There was no pending restore to cancel."
+            )
+            return
+
+        try:
+            backups = await app_context.drive_backup_manager.list_backups()
+        except Exception as exc:  # noqa: BLE001
+            await update.message.reply_text(f"⚠️ Could not reach Google Drive to look up that backup: {exc}")
+            return
+        if not backups:
+            await update.message.reply_text("📦 No backups found in the Drive folder to restore from.")
+            return
+
+        target, error = _resolve_backup_target(backups, context.args[0])
+        if error:
+            await update.message.reply_text(error)
+            return
+
+        await update.message.reply_text(
+            f"⚠️ <b>Confirm Database Restore</b>\n\n"
+            f"Backup: <code>{target.get('name', target['id'])}</code>\n"
+            f"Taken: {_format_backup_datetime(target.get('createdTime'))}\n\n"
+            "This will <b>replace your entire database</b> — every grid, order, "
+            "and trade record — with this backup's contents, the next time the "
+            "bot restarts. It does not happen immediately, and does not affect "
+            "this running session at all.\n\n"
+            "Your current database is backed up automatically before the swap, "
+            "so this can be undone by restoring that file manually if needed.\n\n"
+            "Are you sure?",
+            parse_mode="HTML",
+            reply_markup=restore_confirm_keyboard(target["id"]),
+        )
+
+    async def restorebackup_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if not app_context.is_authorized(query.from_user.id):
+            await query.answer("Not authorized.", show_alert=True)
+            return
+        await query.answer()
+
+        _, file_id = query.data.split(":", 1)
+        if file_id == "cancel":
+            await query.edit_message_text("❌ Restore cancelled — nothing was changed.")
+            return
+
+        if app_context.drive_backup_manager is None:
+            await query.edit_message_text("Google Drive backup isn't enabled.")
+            return
+
+        from storage.restore import stage_restore
+
+        try:
+            backups = await app_context.drive_backup_manager.list_backups()
+            source = next((b for b in backups if b["id"] == file_id), None)
+            source_name = source.get("name", file_id) if source else file_id
+
+            await query.edit_message_text("⏳ Downloading and verifying the backup before staging it…")
+            await stage_restore(
+                app_context.drive_backup_manager, file_id,
+                app_context.settings.database_path, source_name,
+            )
+        except Exception as exc:  # noqa: BLE001
+            await query.edit_message_text(f"⚠️ Could not stage this restore: {exc}")
+            return
+
+        await query.edit_message_text(
+            f"✅ <b>Restore staged</b> from <code>{source_name}</code>.\n\n"
+            "Nothing has changed yet — this will apply automatically the "
+            "<b>next time the bot restarts</b>. Your current database will be "
+            "backed up first at that point, and you'll get a confirmation "
+            "message once it's done.\n\n"
+            "Changed your mind? /restorebackup cancel",
+            parse_mode="HTML",
+        )
 
     # ------------------------------------------------------------------
     # Grid control
@@ -1261,6 +1380,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
     app.add_handler(CommandHandler("backupstatus", backupstatus_cmd))
     app.add_handler(CommandHandler("restorelist", restorelist_cmd))
     app.add_handler(CommandHandler("verifybackup", verifybackup_cmd))
+    app.add_handler(CommandHandler("restorebackup", restorebackup_cmd))
     app.add_handler(CommandHandler("logs", logs_cmd))
     app.add_handler(CommandHandler("defaults", defaults_cmd))
     app.add_handler(CommandHandler("stopgrid", stopgrid_cmd))
@@ -1278,3 +1398,4 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
     app.add_handler(CallbackQueryHandler(grid_action_callback, pattern="^grid_action:"))
     app.add_handler(CallbackQueryHandler(manual_trade_callback, pattern="^mtrade:"))
     app.add_handler(CallbackQueryHandler(restorelist_page_callback, pattern="^restorelist_page:"))
+    app.add_handler(CallbackQueryHandler(restorebackup_confirm_callback, pattern="^restorebackup_confirm:"))

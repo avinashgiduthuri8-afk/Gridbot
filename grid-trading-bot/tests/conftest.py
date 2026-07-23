@@ -254,6 +254,9 @@ class MockNotifier:
     async def drive_backup_failed(self, reason: str) -> None:
         self._record("drive_backup_failed", reason)
 
+    async def restore_applied(self, source_name: str, backup_of_previous_db: str | None) -> None:
+        self._record("restore_applied", source_name, backup_of_previous_db)
+
     async def error(self, context: str, message: str) -> None:
         self._record("error", context, message)
 

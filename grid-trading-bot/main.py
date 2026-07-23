@@ -119,6 +119,16 @@ async def async_main() -> None:
     setup_logging(settings.log_dir, settings.log_level)
     log.info("Starting Manual DCA Grid Trading Bot...")
 
+    from storage.restore import apply_pending_restore_if_any
+    restore_summary = apply_pending_restore_if_any(settings.database_path)
+    if restore_summary is not None:
+        log.warning(
+            "Startup restore applied from %s (file_id=%s) — previous database "
+            "backed up to %s. A notification will follow once Telegram is connected.",
+            restore_summary["source_name"], restore_summary["source_file_id"],
+            restore_summary["backup_of_previous_db"],
+        )
+
     db = Database(settings.database_path)
     await db.connect()
     await db.migrate()
@@ -133,6 +143,12 @@ async def async_main() -> None:
     bot = Bot(token=settings.telegram_bot_token)
     chat_ids = tuple({settings.telegram_owner_id, *settings.telegram_allowed_ids})
     notifier = Notifier(bot, chat_ids)
+
+    if restore_summary is not None:
+        await notifier.restore_applied(
+            source_name=restore_summary["source_name"],
+            backup_of_previous_db=restore_summary["backup_of_previous_db"],
+        )
 
     risk_manager = RiskManager(settings.risk, repos)
     await risk_manager.load_emergency_stop()

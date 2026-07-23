@@ -136,6 +136,17 @@ def restorelist_pagination_keyboard(current_page: int, total_pages: int) -> Inli
     return InlineKeyboardMarkup([row])
 
 
+def restore_confirm_keyboard(file_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("⚠️ Yes, stage this restore", callback_data=f"restorebackup_confirm:{file_id}"),
+                InlineKeyboardButton("❌ Cancel", callback_data="restorebackup_confirm:cancel"),
+            ]
+        ]
+    )
+
+
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [

@@ -265,6 +265,13 @@ build to catch a broken `Dockerfile` before it reaches a real deployment.
   shows row counts. Every automatic backup is already verified this way
   immediately after upload — this lets you re-check any existing backup,
   including old ones, on demand
+- `/restorebackup <number|latest>` — restore the entire database from a
+  backup. **Never happens immediately or live** — it downloads and verifies
+  the backup, stages it, and applies it automatically the *next time the
+  bot restarts* (before any database connection is opened), backing up your
+  current database first, automatically. Use `/restorebackup cancel` to
+  back out of a staged restore before restarting, or `/restorebackup` with
+  no arguments to check whether one is currently staged
 - `/logs` — most recent log entries
 
 **Price alerts** (persisted across restarts)
@@ -403,8 +410,15 @@ check is available at `/webhooks/health`.
 
 ## Recovery after restart
 
-On every startup, `trading/recovery.py` runs before the Telegram bot
-starts polling:
+On every startup, one check runs before anything else even opens the
+database: if a `/restorebackup` was staged during the previous session,
+`storage/restore.py` applies it now — swapping in the backup's data,
+after backing up whatever was there and re-verifying the staged file one
+last time. See `/restorebackup` in the command reference above for how a
+restore gets staged in the first place. Most of the time there's nothing
+staged and this is a no-op.
+
+Then `trading/recovery.py` runs, before the Telegram bot starts polling:
 
 1. Loads all grids marked `active` or `paused` from SQLite.
 2. Re-fetches the live status of every non-terminal local order from

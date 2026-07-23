@@ -377,6 +377,21 @@ class Notifier:
             f"Database snapshot uploaded (id <code>{file_id}</code>)."
         )
 
+    async def restore_applied(self, source_name: str, backup_of_previous_db: str | None) -> None:
+        """Notify that a staged /restorebackup was applied on this startup.
+        Sent once the notifier itself is available, since the actual file
+        swap happens earlier in startup, before Telegram is connected.
+        """
+        lines = [
+            "🔄 <b>Database Restored</b>\n",
+            f"Restored from: <code>{source_name}</code>",
+            "\nThis startup replaced the previous database with this backup — "
+            "all grids, orders, and history now reflect that backup's state.",
+        ]
+        if backup_of_previous_db:
+            lines.append(f"\nYour previous database was saved to:\n<code>{backup_of_previous_db}</code>")
+        await self.send("\n".join(lines))
+
     async def drive_backup_failed(self, reason: str) -> None:
         """Notify that a scheduled Google Drive backup failed.
 
