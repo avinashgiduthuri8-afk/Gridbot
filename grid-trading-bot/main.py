@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import signal
+import sqlite3
 from typing import TYPE_CHECKING
 
 from telegram import Bot
@@ -41,6 +42,36 @@ if TYPE_CHECKING:
     from storage.drive_backup import DriveBackupManager
 
 log = get_logger("trading")
+
+_DB_CONNECT_MAX_ATTEMPTS = 3
+_DB_CONNECT_BACKOFF_SECONDS = (1.0, 2.0, 4.0)
+
+
+async def _connect_db_with_retry(db: Database) -> None:
+    """Runs db.connect() + db.migrate(), retrying ONLY sqlite3.OperationalError
+    (e.g. "database is locked") up to _DB_CONNECT_MAX_ATTEMPTS times with
+    exponential backoff. This specifically covers a Railway redeploy overlap,
+    where the new instance can start while the previous instance still briefly
+    holds the database — normally a transient, self-resolving condition. Any
+    other exception (a real config/permissions/corruption problem) is not
+    retried and propagates immediately, exactly as before this change.
+    """
+    for attempt in range(1, _DB_CONNECT_MAX_ATTEMPTS + 1):
+        try:
+            await db.connect()
+            await db.migrate()
+            return
+        except sqlite3.OperationalError:
+            if attempt == _DB_CONNECT_MAX_ATTEMPTS:
+                raise
+            backoff = _DB_CONNECT_BACKOFF_SECONDS[attempt - 1]
+            log.warning(
+                "Database connection attempt %d/%d failed with a locked-database "
+                "error; retrying in %.0fs (this is expected during a redeploy "
+                "overlap and should resolve on its own)",
+                attempt, _DB_CONNECT_MAX_ATTEMPTS, backoff,
+            )
+            await asyncio.sleep(backoff)
 
 
 async def run_alert_check_loop(
@@ -130,8 +161,7 @@ async def async_main() -> None:
         )
 
     db = Database(settings.database_path)
-    await db.connect()
-    await db.migrate()
+    await _connect_db_with_retry(db)
     repos = Repositories(db)
 
     exchange = CoinDCXClient(
@@ -318,12 +348,21 @@ async def async_main() -> None:
         await application.updater.stop()
         await application.stop()
 
-    daily_summary_task.cancel()
-    alert_task.cancel()
+    background_tasks = [daily_summary_task, alert_task]
     if drive_backup_task is not None:
-        drive_backup_task.cancel()
+        background_tasks.append(drive_backup_task)
     if webhook_task is not None:
-        webhook_task.cancel()
+        background_tasks.append(webhook_task)
+
+    for task in background_tasks:
+        task.cancel()
+    # Wait for cancellation to actually complete before closing shared
+    # resources these tasks might still be touching mid-cancellation.
+    # return_exceptions=True: a normal, expected CancelledError from each
+    # task must not stop us from awaiting (and thus cleanly closing) the
+    # rest — and must not prevent exchange/db from being closed below.
+    await asyncio.gather(*background_tasks, return_exceptions=True)
+
     await price_monitor.stop()
     await order_monitor.stop()
     await exchange.close()

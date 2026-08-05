@@ -310,7 +310,7 @@ class TestProfitSellValidation:
         self, dca, repos, mock_exchange, mock_notifier
     ):
         """total_qty=0.0005 < min_quantity=0.001 — dust position.
-        After clamping, validate_quantity blocks the sell; order_failed is notified."""
+        After clamping, validate_quantity blocks the sell; dust_position_written_off is notified."""
         grid = _make_grid(
             current_level=1,
             total_quantity=0.0005,  # dust
@@ -323,8 +323,8 @@ class TestProfitSellValidation:
         assert len(mock_exchange.orders_placed) == before, (
             "Clamped dust qty must not reach OrderManager"
         )
-        assert mock_notifier.was_called("order_failed"), (
-            "User must be notified via order_failed when profit sell is blocked by dust"
+        assert mock_notifier.was_called("dust_position_written_off"), (
+            "User must be notified via dust_position_written_off when profit sell is blocked by dust"
         )
 
     @pytest.mark.anyio
@@ -332,7 +332,7 @@ class TestProfitSellValidation:
         self, mock_exchange, repos, mock_notifier, permissive_risk_settings
     ):
         """total_qty=0.001 at price=8001: notional=8.001 < min_amount=10.0.
-        validate_quantity blocks after clamp; order_failed is notified."""
+        validate_quantity blocks after clamp; dust_position_written_off is notified."""
         # desired_qty from 150 INR at 8002 ≈ 0.01874 → clamped to 0.001
         # validate_quantity(0.001, 8002, ...) → 0.001*8002=8.002 < 10.0 → FAILS
         grid = _make_grid(
@@ -358,7 +358,7 @@ class TestProfitSellValidation:
         assert len(mock_exchange.orders_placed) == before, (
             "Sub-minimum-notional qty must not reach OrderManager"
         )
-        assert mock_notifier.was_called("order_failed")
+        assert mock_notifier.was_called("dust_position_written_off")
 
     @pytest.mark.anyio
     async def test_profit_sell_desired_qty_exceeds_holding_clamped_correctly(
@@ -451,7 +451,7 @@ class TestStopLossValidation:
     async def test_stop_loss_dust_error_notification_sent(
         self, dca, repos, mock_exchange, mock_notifier
     ):
-        """Dust write-off in stop-loss must send an error notification (not stop_loss_triggered)."""
+        """Dust write-off in stop-loss must send a dust_position_written_off notification (not stop_loss_triggered)."""
         grid = _make_grid(
             current_level=1,
             total_quantity=0.0005,
@@ -461,8 +461,8 @@ class TestStopLossValidation:
         )
         await repos.grids.create(grid)
         await dca.check_grid_triggers(grid.grid_id, current_price=26_000.0)
-        assert mock_notifier.was_called("error"), (
-            "Dust write-off must notify via error channel"
+        assert mock_notifier.was_called("dust_position_written_off"), (
+            "Dust write-off must notify via dust_position_written_off channel"
         )
         assert not mock_notifier.was_called("stop_loss_triggered"), (
             "stop_loss_triggered must NOT be sent when no order was placed"
@@ -517,7 +517,7 @@ class TestStopLossValidation:
         )
         updated = await repos.grids.get(grid.grid_id)
         assert updated["status"] == GridStatus.STOPPED.value
-        assert mock_notifier.was_called("error")
+        assert mock_notifier.was_called("dust_position_written_off")
 
     @pytest.mark.anyio
     async def test_stop_loss_success_notifies_stop_loss_triggered(
@@ -565,7 +565,7 @@ class TestClampedBelowMinimum:
         self, dca, repos, mock_exchange, mock_notifier
     ):
         """profit_sell_amount forces a large desired_qty, clamped to dust 0.0003.
-        validate_quantity blocks; order_failed notification sent."""
+        validate_quantity blocks; dust_position_written_off notification sent."""
         grid = _make_grid(
             current_level=1,
             total_quantity=0.0003,  # dust, will be clamped from any desired qty
@@ -577,7 +577,7 @@ class TestClampedBelowMinimum:
         before = len(mock_exchange.orders_placed)
         await dca.check_grid_triggers(grid.grid_id, current_price=58_000.0)
         assert len(mock_exchange.orders_placed) == before
-        assert mock_notifier.was_called("order_failed")
+        assert mock_notifier.was_called("dust_position_written_off")
 
     @pytest.mark.anyio
     async def test_stop_loss_clamp_to_dust_write_off(
@@ -627,7 +627,7 @@ class TestClampedBelowMinimum:
         before = len(mock_exchange.orders_placed)
         await dca.check_grid_triggers(grid.grid_id, current_price=_LOW_PRICE + 1)
         assert len(mock_exchange.orders_placed) == before
-        assert mock_notifier.was_called("order_failed")
+        assert mock_notifier.was_called("dust_position_written_off")
 
 
 # ---------------------------------------------------------------------------
@@ -747,7 +747,7 @@ class TestPaperModeValidationParity:
         assert len(mock_exchange.orders_placed) == before
         updated = await repos.grids.get(grid.grid_id)
         assert updated["status"] == GridStatus.STOPPED.value
-        assert mock_notifier.was_called("error")
+        assert mock_notifier.was_called("dust_position_written_off")
 
     @pytest.mark.anyio
     async def test_paper_valid_stop_loss_places_sell(self, dca, repos, mock_exchange):
@@ -782,7 +782,7 @@ class TestPaperModeValidationParity:
         before = len(mock_exchange.orders_placed)
         await dca.check_grid_triggers(grid.grid_id, current_price=58_000.0)
         assert len(mock_exchange.orders_placed) == before
-        assert mock_notifier.was_called("order_failed")
+        assert mock_notifier.was_called("dust_position_written_off")
 
     @pytest.mark.anyio
     async def test_paper_valid_dip_buy_reaches_order_manager(

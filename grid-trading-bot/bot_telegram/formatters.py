@@ -2,13 +2,8 @@
 
 from __future__ import annotations
 
+from trading.portfolio_metrics import bot_position_by_currency, pnl_pct as _pnl_pct, unrealized_pnl
 from utils.helpers import fmt_price
-
-
-def _pnl_pct(pnl: float, invested: float) -> float:
-    if invested <= 0:
-        return 0.0
-    return (pnl / invested) * 100
 
 
 def _format_pnl_with_pct(pnl: float, invested: float) -> str:
@@ -77,20 +72,7 @@ def format_wallet_balance(
     # We sum (current_price - avg_entry) * grid.total_quantity across all active/paused
     # grids per currency.  We do NOT apply bot avg entries to total wallet holdings
     # because the wallet may contain coins bought outside the bot.
-    # Keys: currency → (total_bot_qty, weighted_sum_cost) used later when we know price.
-    bot_position_by_currency: dict[str, tuple[float, float]] = {}
-    if grids:
-        for g in grids:
-            if g.get("status") not in ("active", "paused"):
-                continue
-            sym: str = g.get("symbol", "")
-            avg = float(g.get("average_entry_price", 0) or 0)
-            qty = float(g.get("total_quantity", 0) or 0)
-            if avg <= 0 or qty <= 0 or not sym.endswith("INR"):
-                continue
-            currency = sym[:-3]  # strip "INR"
-            prev_qty, prev_cost = bot_position_by_currency.get(currency, (0.0, 0.0))
-            bot_position_by_currency[currency] = (prev_qty + qty, prev_cost + avg * qty)
+    bot_position_by_currency_map = bot_position_by_currency(grids) if grids else {}
 
     lines = ["<b>💰 Wallet Balance</b>\n"]
 
@@ -125,12 +107,12 @@ def format_wallet_balance(
                 # Unrealized P&L is computed from bot grid positions only —
                 # not from total wallet qty, to avoid mixing bot-managed vs
                 # manually-held coins.
-                bot_pos = bot_position_by_currency.get(currency)
+                bot_pos = bot_position_by_currency_map.get(currency)
                 pnl_part = ""
                 if bot_pos:
                     bot_qty, bot_cost = bot_pos
                     bot_avg = bot_cost / bot_qty if bot_qty > 0 else 0.0
-                    unrealized = (price - bot_avg) * bot_qty
+                    unrealized = unrealized_pnl(price, bot_avg, bot_qty)
                     total_unrealized += unrealized
                     pnl_arrow = "📈" if unrealized >= 0 else "📉"
                     pnl_part = (
@@ -378,7 +360,7 @@ def format_paper_grids(grids: list[dict], prices: dict[str, float]) -> str:
         if qty > 0 and avg > 0:
             current = prices.get(symbol)
             if current:
-                unrealized = (current - avg) * qty
+                unrealized = unrealized_pnl(current, avg, qty)
                 total_unrealized += unrealized
                 price_note = (
                     f"\n    Current: ₹{current:,.2f} | "

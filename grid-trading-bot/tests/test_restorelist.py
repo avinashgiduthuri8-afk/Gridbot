@@ -90,8 +90,8 @@ def _get_commands(app_context):
             self.handlers.append(h)
     stub_app = _StubApp()
     handlers_mod.register_handlers(stub_app, app_context)
-    cmd = next(h.callback for h in stub_app.handlers if getattr(h, "command", None) == "restorelist")
-    page_cb = next(h.callback for h in stub_app.handlers if getattr(h, "pattern", None) == "^restorelist_page:")
+    cmd = next(h.callback for h in stub_app.handlers if "restorelist" in getattr(h, "commands", set()))
+    page_cb = next(h.callback for h in stub_app.handlers if getattr(getattr(h, "pattern", None), "pattern", None) == "^restorelist_page:")
     return cmd, page_cb
 
 
@@ -149,7 +149,7 @@ async def test_pagination_across_multiple_pages(app_context):
     update = FakeUpdate()
     await cmd(update, FakeContext())
     assert "Page 1/3" in update.message.replies[-1]
-    buttons = update.message.markups[-1].rows[0]
+    buttons = update.message.markups[-1].inline_keyboard[0]
     assert len(buttons) == 1 and "Next" in buttons[0].text, "page 1 must only show Next, no Prev"
 
     next_update = FakeUpdate()

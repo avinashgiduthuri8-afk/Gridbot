@@ -510,3 +510,105 @@ class TestMonitorStatus:
         assert status.interval_seconds == 5
         assert status.monitored_symbols == ["BTCINR"]
         assert status.api_ok is True
+
+
+# ---------------------------------------------------------------------------
+# Invalid price rejection (0, negative, NaN, Infinity) — must never reach
+# DCAManager, must skip only that symbol, and must not stop the cycle.
+# ---------------------------------------------------------------------------
+
+
+class TestInvalidPriceRejection:
+    @pytest.mark.asyncio
+    async def test_zero_price_skips_grid_and_logs_warning(self, caplog):
+        grids = [_make_grid("grd_1", "BTCINR")]
+        tickers = {"BTCINR": Ticker(symbol="BTCINR", last_price=0.0)}
+        monitor, _, _, dca_manager = _make_monitor(active_grids=grids, tickers=tickers)
+        with caplog.at_level("WARNING"):
+            await monitor._run_cycle()
+        dca_manager.check_grid_triggers.assert_not_awaited()
+        assert any("BTCINR" in r.message and "invalid price" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_negative_price_skips_grid_and_logs_warning(self, caplog):
+        grids = [_make_grid("grd_1", "BTCINR")]
+        tickers = {"BTCINR": Ticker(symbol="BTCINR", last_price=-5_000_000.0)}
+        monitor, _, _, dca_manager = _make_monitor(active_grids=grids, tickers=tickers)
+        with caplog.at_level("WARNING"):
+            await monitor._run_cycle()
+        dca_manager.check_grid_triggers.assert_not_awaited()
+        assert any("BTCINR" in r.message and "invalid price" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_nan_price_skips_grid_and_logs_warning(self, caplog):
+        grids = [_make_grid("grd_1", "BTCINR")]
+        tickers = {"BTCINR": Ticker(symbol="BTCINR", last_price=float("nan"))}
+        monitor, _, _, dca_manager = _make_monitor(active_grids=grids, tickers=tickers)
+        with caplog.at_level("WARNING"):
+            await monitor._run_cycle()
+        dca_manager.check_grid_triggers.assert_not_awaited()
+        assert any("BTCINR" in r.message and "invalid price" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_positive_infinity_price_skips_grid(self, caplog):
+        grids = [_make_grid("grd_1", "BTCINR")]
+        tickers = {"BTCINR": Ticker(symbol="BTCINR", last_price=float("inf"))}
+        monitor, _, _, dca_manager = _make_monitor(active_grids=grids, tickers=tickers)
+        with caplog.at_level("WARNING"):
+            await monitor._run_cycle()
+        dca_manager.check_grid_triggers.assert_not_awaited()
+        assert any("BTCINR" in r.message and "invalid price" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_negative_infinity_price_skips_grid(self, caplog):
+        grids = [_make_grid("grd_1", "BTCINR")]
+        tickers = {"BTCINR": Ticker(symbol="BTCINR", last_price=float("-inf"))}
+        monitor, _, _, dca_manager = _make_monitor(active_grids=grids, tickers=tickers)
+        with caplog.at_level("WARNING"):
+            await monitor._run_cycle()
+        dca_manager.check_grid_triggers.assert_not_awaited()
+        assert any("BTCINR" in r.message and "invalid price" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_valid_price_still_triggers_normally(self):
+        """The fix must not affect any normal, valid price."""
+        grids = [_make_grid("grd_1", "BTCINR")]
+        tickers = {"BTCINR": Ticker(symbol="BTCINR", last_price=5_100_000.0)}
+        monitor, _, _, dca_manager = _make_monitor(active_grids=grids, tickers=tickers)
+        await monitor._run_cycle()
+        dca_manager.check_grid_triggers.assert_awaited_once_with("grd_1", 5_100_000.0)
+
+    @pytest.mark.asyncio
+    async def test_invalid_price_for_one_symbol_does_not_block_other_symbols(self):
+        """Only the symbol with the bad reading is skipped — the cycle
+        continues normally for every other grid."""
+        grids = [
+            _make_grid("grd_1", "BTCINR"),
+            _make_grid("grd_2", "ETHINR"),
+        ]
+        tickers = {
+            "BTCINR": Ticker(symbol="BTCINR", last_price=0.0),  # invalid
+            "ETHINR": Ticker(symbol="ETHINR", last_price=280_000.0),  # valid
+        }
+        monitor, _, _, dca_manager = _make_monitor(active_grids=grids, tickers=tickers)
+        await monitor._run_cycle()
+        assert dca_manager.check_grid_triggers.await_count == 1
+        dca_manager.check_grid_triggers.assert_awaited_once_with("grd_2", 280_000.0)
+
+    @pytest.mark.asyncio
+    async def test_monitoring_loop_continues_after_invalid_price_cycle(self):
+        """A cycle containing an invalid price must not raise or otherwise
+        prevent a SUBSEQUENT cycle from running normally."""
+        grids = [_make_grid("grd_1", "BTCINR")]
+        bad_tickers = {"BTCINR": Ticker(symbol="BTCINR", last_price=float("nan"))}
+        monitor, exchange, _, dca_manager = _make_monitor(active_grids=grids, tickers=bad_tickers)
+
+        await monitor._run_cycle()  # cycle 1: invalid price, no trigger
+        dca_manager.check_grid_triggers.assert_not_awaited()
+
+        # cycle 2: exchange now returns a valid price
+        exchange.get_tickers_batch = AsyncMock(
+            return_value={"BTCINR": Ticker(symbol="BTCINR", last_price=5_000_000.0)}
+        )
+        await monitor._run_cycle()
+        dca_manager.check_grid_triggers.assert_awaited_once_with("grd_1", 5_000_000.0)

@@ -246,6 +246,9 @@ class MockNotifier:
     async def order_failed(self, **kwargs) -> None:
         self._record("order_failed", **kwargs)
 
+    async def dust_position_written_off(self, **kwargs) -> None:
+        self._record("dust_position_written_off", **kwargs)
+
     # System
     async def recovery_complete(self, **kwargs) -> None:
         self._record("recovery_complete", **kwargs)
@@ -349,3 +352,10 @@ async def app_context(repos, mock_exchange, mock_notifier, permissive_risk_setti
         settings=settings, repos=repos, exchange=mock_exchange, dca_manager=dca_manager,
         risk_manager=risk, notifier=mock_notifier, alert_manager=None, price_monitor=None,
     )
+
+
+@pytest.fixture
+def dca_manager(app_context):
+    """Standalone accessor for app_context's DCAManager, for tests that only
+    need the manager and not the full BotAppContext."""
+    return app_context.dca_manager

@@ -94,7 +94,7 @@ def _get_cmd(app_context):
             self.handlers.append(h)
     stub_app = _StubApp()
     handlers_mod.register_handlers(stub_app, app_context)
-    return next(h.callback for h in stub_app.handlers if getattr(h, "command", None) == "verifybackup")
+    return next(h.callback for h in stub_app.handlers if "verifybackup" in getattr(h, "commands", set()))
 
 
 async def test_no_args_shows_usage(app_context):

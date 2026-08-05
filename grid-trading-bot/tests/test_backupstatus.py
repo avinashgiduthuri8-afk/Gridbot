@@ -55,7 +55,7 @@ def _get_backupstatus_cmd(app_context):
             self.handlers.append(h)
     stub_app = _StubApp()
     handlers_mod.register_handlers(stub_app, app_context)
-    return next(h.callback for h in stub_app.handlers if getattr(h, "command", None) == "backupstatus")
+    return next(h.callback for h in stub_app.handlers if "backupstatus" in getattr(h, "commands", set()))
 
 
 def _with_backup_enabled(app_context, enabled: bool, drive_backup_manager=None):

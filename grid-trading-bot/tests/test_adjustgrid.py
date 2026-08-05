@@ -47,7 +47,7 @@ def _stub_app():
 def _get_adjustgrid_cmd(app_context):
     stub_app = _stub_app()
     handlers_mod.register_handlers(stub_app, app_context)
-    return next(h.callback for h in stub_app.handlers if getattr(h, "command", None) == "adjustgrid")
+    return next(h.callback for h in stub_app.handlers if "adjustgrid" in getattr(h, "commands", set()))
 
 
 async def _seed_grid(app_context, repos):

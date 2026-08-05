@@ -106,9 +106,9 @@ def _get_commands(app_context):
             self.handlers.append(h)
     stub_app = _StubApp()
     handlers_mod.register_handlers(stub_app, app_context)
-    cmd = next(h.callback for h in stub_app.handlers if getattr(h, "command", None) == "restorebackup")
+    cmd = next(h.callback for h in stub_app.handlers if "restorebackup" in getattr(h, "commands", set()))
     confirm_cb = next(
-        h.callback for h in stub_app.handlers if getattr(h, "pattern", None) == "^restorebackup_confirm:"
+        h.callback for h in stub_app.handlers if getattr(getattr(h, "pattern", None), "pattern", None) == "^restorebackup_confirm:"
     )
     return cmd, confirm_cb
 
@@ -161,7 +161,7 @@ async def test_confirming_stages_the_restore(app_context, _clean_restore_state):
 
     update = FakeUpdate()
     await cmd(update, FakeContext(args=["latest"]))
-    confirm_data = update.message.markups[-1].rows[0][0].callback_data
+    confirm_data = update.message.markups[-1].inline_keyboard[0][0].callback_data
 
     cb_update = FakeUpdate()
     cb_update.callback_query = FakeCallbackQuery(confirm_data, 111)
@@ -181,7 +181,7 @@ async def test_no_args_with_pending_shows_status(app_context, _clean_restore_sta
 
     update = FakeUpdate()
     await cmd(update, FakeContext(args=["latest"]))
-    confirm_data = update.message.markups[-1].rows[0][0].callback_data
+    confirm_data = update.message.markups[-1].inline_keyboard[0][0].callback_data
     cb_update = FakeUpdate()
     cb_update.callback_query = FakeCallbackQuery(confirm_data, 111)
     await confirm_cb(cb_update, FakeContext())
@@ -199,7 +199,7 @@ async def test_cancel_removes_staged_restore(app_context, _clean_restore_state):
 
     update = FakeUpdate()
     await cmd(update, FakeContext(args=["latest"]))
-    confirm_data = update.message.markups[-1].rows[0][0].callback_data
+    confirm_data = update.message.markups[-1].inline_keyboard[0][0].callback_data
     cb_update = FakeUpdate()
     cb_update.callback_query = FakeCallbackQuery(confirm_data, 111)
     await confirm_cb(cb_update, FakeContext())
@@ -218,7 +218,7 @@ async def test_declining_confirmation_stages_nothing(app_context, _clean_restore
 
     update = FakeUpdate()
     await cmd(update, FakeContext(args=["1"]))
-    cancel_data = update.message.markups[-1].rows[0][1].callback_data
+    cancel_data = update.message.markups[-1].inline_keyboard[0][1].callback_data
 
     cb_update = FakeUpdate()
     cb_update.callback_query = FakeCallbackQuery(cancel_data, 111)
@@ -236,7 +236,7 @@ async def test_unauthorized_user_rejected_on_confirm(app_context, _clean_restore
 
     update = FakeUpdate()
     await cmd(update, FakeContext(args=["1"]))
-    confirm_data = update.message.markups[-1].rows[0][0].callback_data
+    confirm_data = update.message.markups[-1].inline_keyboard[0][0].callback_data
 
     cb_update = FakeUpdate(user_id=999)
     cb_update.callback_query = FakeCallbackQuery(confirm_data, 999)
@@ -258,7 +258,7 @@ async def test_staging_failure_handled_gracefully(app_context, _clean_restore_st
 
     update = FakeUpdate()
     await cmd(update, FakeContext(args=["1"]))
-    confirm_data = update.message.markups[-1].rows[0][0].callback_data
+    confirm_data = update.message.markups[-1].inline_keyboard[0][0].callback_data
 
     cb_update = FakeUpdate()
     cb_update.callback_query = FakeCallbackQuery(confirm_data, 111)

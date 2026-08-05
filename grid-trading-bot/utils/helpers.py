@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 import uuid
 from decimal import ROUND_DOWN, Decimal
@@ -11,6 +12,20 @@ from typing import Any
 def new_id(prefix: str) -> str:
     """Generate a short, sortable unique ID for grids/orders."""
     return f"{prefix}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
+
+
+def is_valid_price(price: float) -> bool:
+    """True only for a usable market price: a finite, positive number.
+
+    Rejects 0, negative values, NaN, and +/-Infinity — all real failure
+    modes an exchange ticker can return during an outage or a data bug.
+    Used as a guard before ANY price is allowed to drive a trading
+    decision (dip-buy, profit-sell, stop-loss); a garbage reading here
+    must never reach that logic, since e.g. a price of 0 would otherwise
+    satisfy a stop-loss condition for any grid and trigger an unwanted
+    full-position sell.
+    """
+    return isinstance(price, (int, float)) and math.isfinite(price) and price > 0
 
 
 def to_decimal(value: Any) -> Decimal:

@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 from storage.repositories import VALID_MONITOR_INTERVALS, DEFAULT_MONITOR_INTERVAL
 from exchange.exceptions import ExchangeRateLimitError
+from utils.helpers import is_valid_price
 from utils.logger import get_logger
 
 if TYPE_CHECKING:
@@ -289,6 +290,20 @@ class PriceMonitor:
                 log.warning(
                     "Skipping trigger check for grid %s (%s): price unavailable",
                     grid["grid_id"], symbol,
+                )
+                continue
+            if not is_valid_price(ticker.last_price):
+                # A real exchange can (rarely) return a garbage reading —
+                # 0, negative, NaN, or +/-Infinity — during an outage or a
+                # data bug. This must never reach DCAManager: e.g. a price
+                # of 0 would otherwise satisfy a stop-loss condition for
+                # any grid and trigger an unwanted full-position sell.
+                # Skip only this symbol's grids this cycle; every other
+                # symbol continues normally.
+                log.warning(
+                    "Skipping trigger check for grid %s (%s): invalid price %r "
+                    "from exchange (must be a finite, positive number)",
+                    grid["grid_id"], symbol, ticker.last_price,
                 )
                 continue
             try:

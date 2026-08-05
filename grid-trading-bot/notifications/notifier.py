@@ -297,6 +297,24 @@ class Notifier:
             f"Reason: <code>{reason[:200]}</code>"
         )
 
+    async def dust_position_written_off(
+        self,
+        symbol: str,
+        grid_id: str,
+        quantity: float,
+        value_inr: float,
+        unit_label: str,
+    ) -> None:
+        await self.send(
+            f"⚠️ Remaining position is below the exchange's minimum sellable "
+            f"quantity.\n\n"
+            f"Remaining:\n"
+            f"• {quantity:.8f} {unit_label}\n"
+            f"• ≈ ₹{value_inr:,.2f}\n\n"
+            f"Position has been written off as exchange dust. Grid "
+            f"<code>{grid_id}</code> closed successfully."
+        )
+
     # ------------------------------------------------------------------
     # System events
     # ------------------------------------------------------------------

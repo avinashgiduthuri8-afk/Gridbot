@@ -10,6 +10,7 @@ Responsibilities:
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from config.constants import GridStatus, OrderStatus
@@ -33,10 +34,49 @@ from risk.risk_manager import RiskManager
 from storage.models import DCAGridRecord, TradeHistoryRecord
 from storage.repositories import Repositories
 from trading.order_manager import OrderManager
-from utils.helpers import new_id, now_iso
+from utils.helpers import is_valid_price, new_id, now_iso
 from utils.logger import get_logger
 
 log = get_logger("trading")
+
+_TERMINAL_GRID_STATUSES = frozenset({GridStatus.STOPPED.value, GridStatus.COMPLETED.value})
+
+
+class _GridLockHandle:
+    """One-shot async context manager returned by DCAManager._grid_lock().
+
+    Delegates actual locking to the shared per-grid asyncio.Lock, and on
+    release asks the manager to consider evicting that lock from
+    _grid_locks — see DCAManager._release_grid_lock_ref for the safety
+    argument. Every existing `async with self._grid_lock(grid_id):` call
+    site is unaffected; this is a drop-in replacement for handing back the
+    asyncio.Lock directly.
+    """
+
+    __slots__ = ("_manager", "_grid_id", "_lock")
+
+    def __init__(self, manager: "DCAManager", grid_id: str, lock: asyncio.Lock) -> None:
+        self._manager = manager
+        self._grid_id = grid_id
+        self._lock = lock
+
+    async def __aenter__(self) -> None:
+        await self._lock.acquire()
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        self._lock.release()
+        await self._manager._release_grid_lock_ref(self._grid_id, self._lock)
+        return False
+
+
+@dataclass
+class ManualSellResult:
+    """Outcome of manual_sell(): either a real order was placed, or the
+    remaining position was too small to sell and was written off as dust
+    (grid closed). Exactly one of `order` / `dust_written_off` applies."""
+    order: object | None
+    dust_written_off: bool
+    message: str
 
 
 class DCAManager:
@@ -54,14 +94,77 @@ class DCAManager:
         self._notifier = notifier
         self._risk = risk
         # Per-grid locks prevent concurrent Telegram commands and monitor callbacks
-        # from racing on the same grid's state.
+        # from racing on the same grid's state. Entries are evicted once a grid
+        # reaches a terminal state (see _GridLockHandle / _release_grid_lock_ref
+        # below) so this doesn't grow unboundedly over a long-running deployment
+        # that creates many grids over time.
         self._grid_locks: dict[str, asyncio.Lock] = {}
+        self._grid_lock_refcounts: dict[str, int] = {}
 
-    def _grid_lock(self, grid_id: str) -> asyncio.Lock:
-        """Return (creating if necessary) the asyncio.Lock for a single grid."""
-        if grid_id not in self._grid_locks:
-            self._grid_locks[grid_id] = asyncio.Lock()
-        return self._grid_locks[grid_id]
+    def _grid_lock(self, grid_id: str) -> "_GridLockHandle":
+        """Return a handle for the (creating-if-necessary) per-grid lock.
+
+        Returns a one-shot _GridLockHandle rather than the asyncio.Lock
+        directly: every call site keeps using `async with self._grid_lock(grid_id):`
+        unchanged, but this lets us safely evict the underlying lock once the
+        grid is done with it — see _release_grid_lock_ref for the eviction
+        safety argument.
+        """
+        lock = self._grid_locks.get(grid_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._grid_locks[grid_id] = lock
+        # Incrementing here (synchronously, before the lock is ever awaited)
+        # means the refcount always reflects every coroutine that currently
+        # intends to use this lock, whether still waiting to acquire it or
+        # already holding it — see _release_grid_lock_ref.
+        self._grid_lock_refcounts[grid_id] = self._grid_lock_refcounts.get(grid_id, 0) + 1
+        return _GridLockHandle(self, grid_id, lock)
+
+    async def _release_grid_lock_ref(self, grid_id: str, lock: asyncio.Lock) -> None:
+        """Called after a _GridLockHandle releases its lock. Evicts the
+        grid's entry from _grid_locks (and this refcount) if, and only if:
+
+          1. This was the LAST outstanding handle for grid_id (refcount
+             reaches 0) — meaning no other coroutine is currently waiting
+             to acquire, or already holding, this exact lock object. Since
+             the refcount is incremented synchronously in _grid_lock()
+             before any await, and asyncio is single-threaded/cooperative,
+             refcount==0 here is a reliable (not just probable) signal that
+             nobody else currently references this lock — this is the
+             "never remove a lock while another coroutine is still using
+             it" guarantee, without depending on any asyncio.Lock private
+             internals.
+          2. The grid has actually reached a terminal state (STOPPED or
+             COMPLETED) by the time we check. If it hasn't yet, the lock is
+             kept — a later release (when the grid does become terminal)
+             will evict it then.
+
+        If eviction doesn't happen this time, nothing is lost: the lock
+        stays in _grid_locks and will be reused (and re-checked for
+        eviction) on the grid's next operation.
+        """
+        remaining = self._grid_lock_refcounts.get(grid_id, 0) - 1
+        if remaining > 0:
+            self._grid_lock_refcounts[grid_id] = remaining
+            return
+        self._grid_lock_refcounts.pop(grid_id, None)
+
+        if self._grid_locks.get(grid_id) is not lock:
+            return  # already evicted/replaced by someone else; nothing to do
+
+        try:
+            grid = await self._repos.grids.get(grid_id)
+        except Exception:  # noqa: BLE001 — lock-cleanup bookkeeping must never raise
+            log.exception("Grid-lock eviction check failed for %s", grid_id)
+            return
+
+        if grid is not None and grid["status"] in _TERMINAL_GRID_STATUSES:
+            # Re-check identity: refcount was 0 a moment ago, but this is an
+            # `await` boundary above, so in principle another _grid_lock()
+            # call could have run in between and replaced the dict entry.
+            if self._grid_locks.get(grid_id) is lock:
+                del self._grid_locks[grid_id]
 
     async def _get_wallet_balance(self, mode: str) -> float:
         """Return the INR balance to risk-check against for this grid's mode.
@@ -317,7 +420,49 @@ class DCAManager:
             )
             return order
 
-    async def manual_sell(self, grid_id: str, inr_amount: float | None):
+    async def _write_off_dust_position(
+        self, grid_id: str, symbol: str, quantity: float, current_price: float,
+        unit_label: str,
+    ) -> float:
+        """Close a grid whose entire remaining position is unsellable dust.
+
+        Shared by manual_sell() and the automated profit-sell / stop-loss
+        dust write-offs so all three record the same audit trail: grid
+        marked STOPPED, quantity/investment zeroed, realized_profit left
+        untouched (nothing was actually sold), a trade_history row with a
+        synthetic "(dust-writeoff)" order id, and the same notifier
+        message. Returns the dust's INR value for the caller's own
+        messaging/logging.
+        """
+        value_inr = quantity * current_price
+        await self._repos.grids.update_state(
+            grid_id,
+            status=GridStatus.STOPPED.value,
+            total_quantity=0.0,
+            total_investment=0.0,
+        )
+        await self._repos.trade_history.record(
+            TradeHistoryRecord(
+                trade_id=new_id("trd"),
+                grid_id=grid_id,
+                order_id="(dust-writeoff)",
+                symbol=symbol,
+                side="sell",
+                price=current_price,
+                quantity=quantity,
+                investment_inr=0.0,
+                fee=0.0,
+                pnl=0.0,
+                executed_at=now_iso(),
+            )
+        )
+        await self._notifier.dust_position_written_off(
+            symbol=symbol, grid_id=grid_id, quantity=quantity,
+            value_inr=value_inr, unit_label=unit_label,
+        )
+        return value_inr
+
+    async def manual_sell(self, grid_id: str, inr_amount: float | None) -> ManualSellResult:
         """Place a manual sell on an active grid.
 
         ``inr_amount=None`` sells the entire remaining position (full
@@ -330,7 +475,22 @@ class DCAManager:
         buys and sells are treated asymmetrically): reducing a position
         must never be blocked, including under emergency stop.
 
-        Raises ValueError with a clear reason on any validation failure.
+        Two distinct outcomes when the requested quantity can't clear the
+        exchange's minimum sellable size:
+          - If this covers the ENTIRE remaining position, there's no future
+            retry that changes the outcome — it's unsellable dust. This
+            mirrors the automated profit-sell / stop-loss dust write-off:
+            the grid is closed, realized_profit is left untouched, and a
+            trade_history row records the write-off for the audit trail.
+            Returned as a ManualSellResult (not raised) since this is a
+            successful resolution, not a failure.
+          - If it's a genuine partial request that happens to be too
+            small, raises ValueError with the held quantity and the
+            exchange's minimum, since a larger amount or a full close
+            would still work.
+
+        Raises ValueError with a clear reason on any other validation
+        failure.
         """
         async with self._grid_lock(grid_id):
             grid = await self._repos.grids.get(grid_id)
@@ -353,21 +513,45 @@ class DCAManager:
             ticker = await self._exchange.get_ticker(symbol)
             current_price = ticker.last_price
             market_info = await self._exchange.get_market_info(symbol)
+            unit_label = market_info.target_currency_short_name or "coins"
+            full_position_requested = inr_amount is None
 
-            if inr_amount is None:
+            def _dust_rejection_message() -> str:
+                return (
+                    "Requested sell amount is below the exchange's minimum "
+                    "trade size.\n\n"
+                    f"Held:\n• {total_qty:.8f} {unit_label}\n\n"
+                    f"Minimum sellable:\n• {market_info.min_quantity} {unit_label}\n\n"
+                    "Increase the sell amount or sell the full position."
+                )
+
+            if full_position_requested:
                 desired_qty = total_qty
             else:
                 if inr_amount <= 0:
                     raise ValueError("Sell amount must be greater than zero.")
-                desired_qty = calculate_quantity_for_inr(
-                    inr_amount, current_price,
-                    market_info.step_size, market_info.min_quantity,
-                    min_notional=market_info.min_amount,
-                    quantity_precision=market_info.target_currency_precision,
-                    price_precision=market_info.base_currency_precision,
-                )
+                try:
+                    desired_qty = calculate_quantity_for_inr(
+                        inr_amount, current_price,
+                        market_info.step_size, market_info.min_quantity,
+                        min_notional=market_info.min_amount,
+                        quantity_precision=market_info.target_currency_precision,
+                        price_precision=market_info.base_currency_precision,
+                    )
+                except ValueError:
+                    # The requested INR amount itself doesn't reach the
+                    # exchange minimum at this price — give the same
+                    # held/minimum-sellable framing as a post-clamp dust
+                    # rejection below, rather than the raw validator text.
+                    raise ValueError(_dust_rejection_message()) from None
 
             sell_qty = clamp_sell_quantity(desired_qty, total_qty, market_info.step_size)
+
+            # Clamping to the available balance can push a previously-valid
+            # quantity down to zero or back below min_quantity/min_notional
+            # (e.g. a "dust" remainder) — revalidate through the SAME rule
+            # engine as buys before this quantity is allowed to reach
+            # OrderManager.
             check = validate_quantity(
                 sell_qty, current_price,
                 market_info.min_quantity,
@@ -375,10 +559,35 @@ class DCAManager:
                 min_notional=market_info.min_amount,
                 quantity_precision=market_info.target_currency_precision,
                 price_precision=market_info.base_currency_precision,
-                unit_label=market_info.target_currency_short_name or "coins",
+                unit_label=unit_label,
             )
+
             if not check.valid:
-                raise ValueError(check.reason)
+                if full_position_requested or desired_qty >= total_qty:
+                    # The entire remaining position is unsellable dust —
+                    # write it off and close the grid.
+                    log.warning(
+                        "Manual sell for %s: remaining position %.8f %s cannot be "
+                        "sold (%s) and this was the full remaining quantity — "
+                        "writing off as dust and closing grid.",
+                        grid_id, total_qty, unit_label, check.reason,
+                    )
+                    value_inr = await self._write_off_dust_position(
+                        grid_id, symbol, total_qty, current_price, unit_label,
+                    )
+                    message = (
+                        "⚠️ Remaining position is below the exchange's "
+                        "minimum sellable quantity.\n\n"
+                        f"Remaining:\n• {total_qty:.8f} {unit_label}\n"
+                        f"• ≈ ₹{value_inr:,.2f}\n\n"
+                        "Position has been written off as exchange dust. "
+                        "Grid closed successfully."
+                    )
+                    return ManualSellResult(order=None, dust_written_off=True, message=message)
+
+                # Genuine partial sell, not the full position — retryable
+                # with a larger amount or a full close, so no write-off.
+                raise ValueError(_dust_rejection_message())
 
             order = await self._order_manager.place_dca_order(
                 grid_id=grid_id, symbol=symbol, side="sell",
@@ -393,7 +602,10 @@ class DCAManager:
                 symbol=symbol, grid_id=grid_id, order_id=order.order_id,
                 side="sell", quantity=sell_qty, price=current_price, mode=mode,
             )
-            return order
+            return ManualSellResult(
+                order=order, dust_written_off=False,
+                message=f"✅ Manual sell placed: order <code>{order.order_id}</code>",
+            )
 
     # A closed allow-list, not user input, drives which literal keyword is
     # passed to update_state() below — see the safety note on
@@ -488,6 +700,21 @@ class DCAManager:
             return
 
         symbol: str = grid["symbol"]
+
+        # Second layer of defense against a garbage price (0, negative, NaN,
+        # +/-Infinity): PriceMonitor already filters these out before calling
+        # here, but check_grid_triggers() is also called directly by the
+        # replay engine, tests, and any future integration that bypasses
+        # PriceMonitor — none of those get this validation for free, so it
+        # must be enforced here too, not only upstream.
+        if not is_valid_price(current_price):
+            log.warning(
+                "check_grid_triggers: rejecting invalid price %r for grid %s (%s) "
+                "— must be a finite, positive number",
+                current_price, grid_id, symbol,
+            )
+            return
+
         avg_entry: float = grid["average_entry_price"]
         total_qty: float = grid["total_quantity"]
 
@@ -789,24 +1016,25 @@ class DCAManager:
             # meaningfully less than total_quantity) is left to retry later,
             # since there's still a real position that a future trigger
             # could act on differently.
-            if sell_qty >= grid["total_quantity"]:
+            #
+            # Deliberately compares the PRE-clamp desired_qty against
+            # total_quantity here, not the clamped/step-rounded sell_qty:
+            # step-size flooring can leave sell_qty a hair below
+            # total_quantity even when desired_qty clearly asked for the
+            # whole position (e.g. 0.0003 floored to 0.00029 due to
+            # floating-point representation), which would otherwise
+            # misroute an actual full-position dust case into the
+            # partial-retry branch below.
+            if desired_qty >= grid["total_quantity"]:
                 log.warning(
                     "Profit sell for %s: remaining position %.8f cannot be sold "
                     "(%s) and this was the full remaining quantity — writing "
                     "off as dust and closing grid.",
                     grid_id, sell_qty, check.reason,
                 )
-                await self._repos.grids.update_state(
-                    grid_id,
-                    status=GridStatus.STOPPED.value,
-                    total_quantity=0.0,
-                    total_investment=0.0,
-                )
-                await self._notifier.error(
-                    f"Profit sell {symbol}",
-                    f"Grid closed, but {sell_qty:.8f} {market_info.target_currency_short_name or 'coins'} "
-                    f"(the entire remaining position) could not be sold "
-                    f"({check.reason}) and was written off as dust.",
+                await self._write_off_dust_position(
+                    grid_id, symbol, grid["total_quantity"], current_price,
+                    market_info.target_currency_short_name or "coins",
                 )
                 return
 
@@ -890,16 +1118,9 @@ class DCAManager:
                     "writing off as dust and closing grid.",
                     grid_id, sell_qty, check.reason,
                 )
-                await self._repos.grids.update_state(
-                    grid_id,
-                    status=GridStatus.STOPPED.value,
-                    total_quantity=0.0,
-                    total_investment=0.0,
-                )
-                await self._notifier.error(
-                    f"Stop loss {symbol}",
-                    f"Grid closed, but {sell_qty:.8f} {market_info.target_currency_short_name or 'coins'} "
-                    f"could not be sold ({check.reason}) and was written off as dust.",
+                await self._write_off_dust_position(
+                    grid_id, symbol, total_qty, current_price,
+                    market_info.target_currency_short_name or "coins",
                 )
                 return
 

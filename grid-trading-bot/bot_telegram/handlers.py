@@ -1032,11 +1032,8 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
                     parse_mode="HTML",
                 )
             else:
-                order = await app_context.dca_manager.manual_sell(grid_id, amount)
-                await query.edit_message_text(
-                    f"✅ Manual sell placed: order <code>{order.order_id}</code>",
-                    parse_mode="HTML",
-                )
+                result = await app_context.dca_manager.manual_sell(grid_id, amount)
+                await query.edit_message_text(result.message, parse_mode="HTML")
         except ValueError as exc:
             await query.edit_message_text(f"❌ {exc}")
 

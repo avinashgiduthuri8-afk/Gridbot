@@ -219,6 +219,38 @@ Notes:
 compile-check across every module, the full `pytest` suite, and a Docker
 build to catch a broken `Dockerfile` before it reaches a real deployment.
 
+## Deploying to Railway
+
+Railway builds directly from the included `Dockerfile` — no extra config
+file is required.
+
+1. Push this repository to GitHub (or connect it directly if already there).
+2. In Railway: **New Project → Deploy from GitHub repo**, select this repo.
+   Railway detects the `Dockerfile` automatically and builds from it.
+3. Under the service's **Variables** tab, set every variable from
+   `.env.example` with your real values (`TELEGRAM_BOT_TOKEN`,
+   `TELEGRAM_CHAT_ID`, `COINDCX_API_KEY`, `COINDCX_API_SECRET`, risk
+   limits, etc.) — Railway injects these as real environment variables, so
+   nothing needs to change in how `config/settings.py` reads them.
+4. Add a **Volume** mounted at `/app/data` (and, if you want log files to
+   survive redeploys too, `/app/logs`). Without a volume, `data/grid_bot.db`
+   is ephemeral and every redeploy starts from a blank database — the same
+   "persistent database across redeploys" concern called out for Docker
+   above applies identically here.
+5. No public networking/port is needed unless you enable the optional
+   CoinDCX webhook receiver (`WEBHOOK_ENABLED=true`) — if you do, expose
+   the service and set `WEBHOOK_PORT` to match Railway's assigned port.
+6. Deploy. Watch the build logs, then the runtime logs, for the startup
+   recovery summary (see "Recovery after restart" below) — that's the
+   fastest confirmation the bot connected to Telegram/CoinDCX and read the
+   database correctly on this platform.
+
+For the replay framework's own historical-data fetch script
+(`replay/fetch_coindcx_history.py`), run it locally or in any environment
+with outbound internet access — it's a standalone tool, not part of the
+deployed bot, and needs `pip install requests` which isn't in this
+project's `requirements.txt` for that reason.
+
 ## Command reference
 
 **Grid control**
@@ -459,6 +491,22 @@ The suite covers DCA math (average entry, next buy/sell/stop-loss prices,
 exchange-rule validation), risk manager decision logic, order lifecycle and
 recovery, and SQLite repository CRUD behavior — all without touching the
 real CoinDCX API or Telegram.
+
+## Replay & stress testing
+
+Before running an extended paper-trading soak test, `replay/` lets you
+feed historical or synthetically generated price data through the real
+trading engine at high speed to catch logic issues quickly instead of
+waiting on real time:
+
+```bash
+python replay.py --symbols BTCINR ETHINR SOLINR --scenario bull --bars 2000
+```
+
+See [`replay/README.md`](replay/README.md) for the full CLI reference,
+scenario descriptions, validation checks, and report format, and
+[`replay/BENCHMARK.md`](replay/BENCHMARK.md) for measured throughput/memory
+numbers from stress runs up to 100,000+ candles across 10 symbols.
 
 ## Production checklist (VPS / always-on deployment)
 

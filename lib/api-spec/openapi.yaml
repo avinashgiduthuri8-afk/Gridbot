@@ -1,36 +1,788 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
-  title: Api
+  title: Grid Bot Dashboard API
+  description: Read-only API over the Grid Bot's trading data. Reuses the existing
+    repository layer and trading.portfolio_metrics — no trading logic, and no write
+    operations, live in this phase.
   version: 0.1.0
-  description: API specification
-servers:
-  - url: /api
-    description: Base API path
-tags:
-  - name: health
-    description: Health operations
 paths:
-  /healthz:
+  /health:
     get:
-      operationId: healthCheck
-      tags: [health]
+      tags:
+      - health
       summary: Health check
-      description: Returns server health status
+      operationId: health_check_api_health_get
       responses:
-        "200":
-          description: Healthy
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/HealthStatus"
+                $ref: '#/components/schemas/HealthResponse'
+  /grids:
+    get:
+      tags:
+      - grids
+      summary: List every grid
+      operationId: list_grids_api_grids_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GridListResponse'
+  /grids/{grid_id}:
+    get:
+      tags:
+      - grids
+      summary: Get one grid by ID
+      operationId: get_grid_api_grids__grid_id__get
+      parameters:
+      - name: grid_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Grid Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GridResponse'
+        '404':
+          description: Grid not found
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /positions:
+    get:
+      tags:
+      - positions
+      summary: List open positions
+      description: Every ACTIVE/PAUSED grid currently holding a nonzero quantity.
+        This read-only phase has no live price feed, so unrealized P&L is 0.0 unless
+        a price is supplied via the optional `prices` query parameter, e.g. ?prices=BTCINR:5000000,ETHINR:280000.
+      operationId: list_positions_api_positions_get
+      parameters:
+      - name: prices
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Optional 'SYMBOL:price,...' override
+          title: Prices
+        description: Optional 'SYMBOL:price,...' override
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PositionListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /orders:
+    get:
+      tags:
+      - orders
+      summary: List orders
+      operationId: list_orders_api_orders_get
+      parameters:
+      - name: grid_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Filter to one grid's orders
+          title: Grid Id
+        description: Filter to one grid's orders
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 1000
+          minimum: 1
+          description: Max rows when grid_id is not given
+          default: 200
+          title: Limit
+        description: Max rows when grid_id is not given
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /trade-history:
+    get:
+      tags:
+      - trade-history
+      summary: List trade history
+      operationId: list_trade_history_api_trade_history_get
+      parameters:
+      - name: grid_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Filter to one grid's trades
+          title: Grid Id
+        description: Filter to one grid's trades
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 1000
+          minimum: 1
+          default: 200
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TradeHistoryResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /portfolio:
+    get:
+      tags:
+      - portfolio
+      summary: Portfolio totals
+      description: Aggregate realized/unrealized/combined P&L and grid counts by status,
+        via trading.portfolio_metrics.portfolio_totals(). Like /positions, unrealized
+        P&L is 0.0 unless prices are supplied.
+      operationId: get_portfolio_api_portfolio_get
+      parameters:
+      - name: prices
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Optional 'SYMBOL:price,...' override
+          title: Prices
+        description: Optional 'SYMBOL:price,...' override
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortfolioResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /analytics:
+    get:
+      tags:
+      - analytics
+      summary: Trading analytics
+      operationId: get_analytics_api_analytics_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsResponse'
+  /settings:
+    get:
+      tags:
+      - settings
+      summary: Operational settings
+      operationId: get_settings_api_settings_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
 components:
   schemas:
-    HealthStatus:
+    AnalyticsResponse:
+      properties:
+        total_buys:
+          type: integer
+          title: Total Buys
+        total_sells:
+          type: integer
+          title: Total Sells
+        total_dust_writeoffs:
+          type: integer
+          title: Total Dust Writeoffs
+        total_realized_profit:
+          type: number
+          title: Total Realized Profit
+        win_rate_pct:
+          type: number
+          title: Win Rate Pct
+        max_drawdown_pct:
+          type: number
+          title: Max Drawdown Pct
+        profit_factor:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Profit Factor
+        completed_cycles:
+          type: integer
+          title: Completed Cycles
       type: object
+      required:
+      - total_buys
+      - total_sells
+      - total_dust_writeoffs
+      - total_realized_profit
+      - win_rate_pct
+      - max_drawdown_pct
+      - completed_cycles
+      title: AnalyticsResponse
+    GridListResponse:
+      properties:
+        grids:
+          items:
+            $ref: '#/components/schemas/GridResponse'
+          type: array
+          title: Grids
+        count:
+          type: integer
+          title: Count
+          description: Number of grids in this response
+      type: object
+      required:
+      - grids
+      - count
+      title: GridListResponse
+    GridResponse:
+      properties:
+        grid_id:
+          type: string
+          title: Grid Id
+        symbol:
+          type: string
+          title: Symbol
+        status:
+          type: string
+          title: Status
+        mode:
+          type: string
+          title: Mode
+        entry_price:
+          type: number
+          title: Entry Price
+        base_investment:
+          type: number
+          title: Base Investment
+        dip_buy_amount:
+          type: number
+          title: Dip Buy Amount
+        dip_percentage:
+          type: number
+          title: Dip Percentage
+        profit_sell_amount:
+          type: number
+          title: Profit Sell Amount
+        profit_percentage:
+          type: number
+          title: Profit Percentage
+        max_levels:
+          type: integer
+          title: Max Levels
+        stop_loss_percentage:
+          type: number
+          title: Stop Loss Percentage
+        current_level:
+          type: integer
+          title: Current Level
+        total_quantity:
+          type: number
+          title: Total Quantity
+        total_investment:
+          type: number
+          title: Total Investment
+        average_entry_price:
+          type: number
+          title: Average Entry Price
+        last_buy_price:
+          type: number
+          title: Last Buy Price
+        next_buy_price:
+          type: number
+          title: Next Buy Price
+        next_sell_price:
+          type: number
+          title: Next Sell Price
+        realized_profit:
+          type: number
+          title: Realized Profit
+        completed_cycles:
+          type: integer
+          title: Completed Cycles
+        trailing_enabled:
+          type: boolean
+          title: Trailing Enabled
+        trailing_percentage:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Trailing Percentage
+        trailing_peak_price:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Trailing Peak Price
+        created_at:
+          type: string
+          title: Created At
+        updated_at:
+          type: string
+          title: Updated At
+      type: object
+      required:
+      - grid_id
+      - symbol
+      - status
+      - mode
+      - entry_price
+      - base_investment
+      - dip_buy_amount
+      - dip_percentage
+      - profit_sell_amount
+      - profit_percentage
+      - max_levels
+      - stop_loss_percentage
+      - current_level
+      - total_quantity
+      - total_investment
+      - average_entry_price
+      - last_buy_price
+      - next_buy_price
+      - next_sell_price
+      - realized_profit
+      - completed_cycles
+      - trailing_enabled
+      - created_at
+      - updated_at
+      title: GridResponse
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    HealthResponse:
       properties:
         status:
           type: string
+          title: Status
+        database_connected:
+          type: boolean
+          title: Database Connected
+      type: object
       required:
-        - status
-
+      - status
+      - database_connected
+      title: HealthResponse
+    OrderListResponse:
+      properties:
+        orders:
+          items:
+            $ref: '#/components/schemas/OrderResponse'
+          type: array
+          title: Orders
+        count:
+          type: integer
+          title: Count
+      type: object
+      required:
+      - orders
+      - count
+      title: OrderListResponse
+    OrderResponse:
+      properties:
+        order_id:
+          type: string
+          title: Order Id
+        grid_id:
+          type: string
+          title: Grid Id
+        exchange_order_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Exchange Order Id
+        symbol:
+          type: string
+          title: Symbol
+        side:
+          type: string
+          title: Side
+        order_type:
+          type: string
+          title: Order Type
+        price:
+          type: number
+          title: Price
+        quantity:
+          type: number
+          title: Quantity
+        filled_quantity:
+          type: number
+          title: Filled Quantity
+        filled_price:
+          type: number
+          title: Filled Price
+        status:
+          type: string
+          title: Status
+        fee:
+          type: number
+          title: Fee
+        reconciliation_status:
+          type: string
+          title: Reconciliation Status
+        created_at:
+          type: string
+          title: Created At
+        updated_at:
+          type: string
+          title: Updated At
+      type: object
+      required:
+      - order_id
+      - grid_id
+      - symbol
+      - side
+      - order_type
+      - price
+      - quantity
+      - filled_quantity
+      - filled_price
+      - status
+      - fee
+      - reconciliation_status
+      - created_at
+      - updated_at
+      title: OrderResponse
+    PortfolioResponse:
+      properties:
+        total_realized:
+          type: number
+          title: Total Realized
+        total_unrealized:
+          type: number
+          title: Total Unrealized
+        total_invested:
+          type: number
+          title: Total Invested
+        combined_total:
+          type: number
+          title: Combined Total
+        portfolio_return_pct:
+          type: number
+          title: Portfolio Return Pct
+        active_grid_count:
+          type: integer
+          title: Active Grid Count
+        paused_grid_count:
+          type: integer
+          title: Paused Grid Count
+        completed_grid_count:
+          type: integer
+          title: Completed Grid Count
+        stopped_grid_count:
+          type: integer
+          title: Stopped Grid Count
+      type: object
+      required:
+      - total_realized
+      - total_unrealized
+      - total_invested
+      - combined_total
+      - portfolio_return_pct
+      - active_grid_count
+      - paused_grid_count
+      - completed_grid_count
+      - stopped_grid_count
+      title: PortfolioResponse
+    PositionListResponse:
+      properties:
+        positions:
+          items:
+            $ref: '#/components/schemas/PositionResponse'
+          type: array
+          title: Positions
+        count:
+          type: integer
+          title: Count
+      type: object
+      required:
+      - positions
+      - count
+      title: PositionListResponse
+    PositionResponse:
+      properties:
+        grid_id:
+          type: string
+          title: Grid Id
+        symbol:
+          type: string
+          title: Symbol
+        status:
+          type: string
+          title: Status
+        mode:
+          type: string
+          title: Mode
+        quantity:
+          type: number
+          title: Quantity
+        average_entry_price:
+          type: number
+          title: Average Entry Price
+        invested:
+          type: number
+          title: Invested
+        current_price:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Current Price
+        realized_pnl:
+          type: number
+          title: Realized Pnl
+        unrealized_pnl:
+          type: number
+          title: Unrealized Pnl
+        combined_pnl:
+          type: number
+          title: Combined Pnl
+        current_level:
+          type: integer
+          title: Current Level
+        max_levels:
+          type: integer
+          title: Max Levels
+        trailing_enabled:
+          type: boolean
+          title: Trailing Enabled
+        trailing_peak_price:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Trailing Peak Price
+      type: object
+      required:
+      - grid_id
+      - symbol
+      - status
+      - mode
+      - quantity
+      - average_entry_price
+      - invested
+      - realized_pnl
+      - unrealized_pnl
+      - combined_pnl
+      - current_level
+      - max_levels
+      - trailing_enabled
+      title: PositionResponse
+    RiskSettingsResponse:
+      properties:
+        max_total_capital:
+          type: number
+          title: Max Total Capital
+        max_capital_per_coin:
+          type: number
+          title: Max Capital Per Coin
+        max_simultaneous_grids:
+          type: integer
+          title: Max Simultaneous Grids
+        min_wallet_balance:
+          type: number
+          title: Min Wallet Balance
+        daily_loss_limit:
+          type: number
+          title: Daily Loss Limit
+      type: object
+      required:
+      - max_total_capital
+      - max_capital_per_coin
+      - max_simultaneous_grids
+      - min_wallet_balance
+      - daily_loss_limit
+      title: RiskSettingsResponse
+    SettingsResponse:
+      properties:
+        risk:
+          $ref: '#/components/schemas/RiskSettingsResponse'
+        order_poll_interval_seconds:
+          type: integer
+          title: Order Poll Interval Seconds
+        price_poll_interval_seconds:
+          type: integer
+          title: Price Poll Interval Seconds
+        daily_summary_interval_seconds:
+          type: integer
+          title: Daily Summary Interval Seconds
+        monitor_interval_seconds:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Monitor Interval Seconds
+        emergency_stop_active:
+          type: boolean
+          title: Emergency Stop Active
+        backup_enabled:
+          type: boolean
+          title: Backup Enabled
+        webhook_enabled:
+          type: boolean
+          title: Webhook Enabled
+        grid_defaults:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Grid Defaults
+      type: object
+      required:
+      - risk
+      - order_poll_interval_seconds
+      - price_poll_interval_seconds
+      - daily_summary_interval_seconds
+      - emergency_stop_active
+      - backup_enabled
+      - webhook_enabled
+      title: SettingsResponse
+    TradeHistoryResponse:
+      properties:
+        trades:
+          items:
+            $ref: '#/components/schemas/TradeResponse'
+          type: array
+          title: Trades
+        count:
+          type: integer
+          title: Count
+      type: object
+      required:
+      - trades
+      - count
+      title: TradeHistoryResponse
+    TradeResponse:
+      properties:
+        trade_id:
+          type: string
+          title: Trade Id
+        grid_id:
+          type: string
+          title: Grid Id
+        order_id:
+          type: string
+          title: Order Id
+        symbol:
+          type: string
+          title: Symbol
+        side:
+          type: string
+          title: Side
+        price:
+          type: number
+          title: Price
+        quantity:
+          type: number
+          title: Quantity
+        investment_inr:
+          type: number
+          title: Investment Inr
+        fee:
+          type: number
+          title: Fee
+        pnl:
+          type: number
+          title: Pnl
+        executed_at:
+          type: string
+          title: Executed At
+      type: object
+      required:
+      - trade_id
+      - grid_id
+      - order_id
+      - symbol
+      - side
+      - price
+      - quantity
+      - investment_inr
+      - fee
+      - pnl
+      - executed_at
+      title: TradeResponse
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+servers:
+- url: /api
+  description: Base API path

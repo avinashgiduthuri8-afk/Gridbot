@@ -165,3 +165,74 @@ async def test_trailing_can_reactivate_for_a_second_cycle(repos, mock_exchange, 
         await dca.check_grid_triggers(grid_id, next_target + 1.0)
         grid_cycle2 = await repos.grids.get(grid_id)
         assert grid_cycle2["trailing_peak_price"] is not None, "trailing must reactivate cleanly for the next cycle"
+
+
+async def test_trailing_state_survives_process_restart(repos, mock_exchange, mock_notifier, permissive_risk_settings):
+    """trailing_peak_price is a plain DB column, not in-memory state — a
+    brand-new DCAManager instance (as created on every process restart)
+    must pick up an already-active trailing cycle from the DB and keep
+    tracking/triggering correctly, with no special recovery step needed."""
+    dca_before_restart = await _make_dca_manager(repos, mock_exchange, mock_notifier, permissive_risk_settings)
+    grid_id = await _start_trailing_grid(dca_before_restart, repos, trailing_percentage=3.0)
+
+    # Activate trailing and track a peak, all before the "restart".
+    await dca_before_restart.check_grid_triggers(grid_id, 106.0)
+    await dca_before_restart.check_grid_triggers(grid_id, 120.0)
+    grid_before = await repos.grids.get(grid_id)
+    assert grid_before["trailing_peak_price"] == 120.0
+
+    # Simulate a process restart: a completely fresh DCAManager instance,
+    # same underlying repos/DB — no shared in-memory state whatsoever.
+    dca_after_restart = await _make_dca_manager(repos, mock_exchange, mock_notifier, permissive_risk_settings)
+
+    # The new instance must still see the peak already tracked...
+    grid_seen_by_new_instance = await repos.grids.get(grid_id)
+    assert grid_seen_by_new_instance["trailing_peak_price"] == 120.0
+
+    # ...continue tracking a new higher peak...
+    await dca_after_restart.check_grid_triggers(grid_id, 130.0)
+    assert (await repos.grids.get(grid_id))["trailing_peak_price"] == 130.0
+
+    # ...and still correctly fire the trailing-stop sell on pullback.
+    await dca_after_restart.check_grid_triggers(grid_id, 126.0)  # 3.08% pullback from 130
+    orders = await repos.orders.list_for_grid(grid_id)
+    sell_orders = [o for o in orders if o["side"] == "sell"]
+    assert sell_orders, "trailing-stop sell must still fire correctly after a simulated restart"
+    grid_after = await repos.grids.get(grid_id)
+    assert grid_after["trailing_peak_price"] is None
+
+
+async def test_trailing_resets_after_dust_writeoff_sell(repos, mock_exchange, mock_notifier, permissive_risk_settings):
+    """If the trailing-stop sell fires but the remaining position is dust
+    (below the exchange's minimum sellable quantity), _execute_profit_sell
+    writes it off and closes the grid — trailing_peak_price must still
+    reset to None rather than being left stuck on a now-closed grid."""
+    from config.constants import GridStatus
+    from storage.models import DCAGridRecord
+    from utils.helpers import new_id, now_iso
+
+    dca = await _make_dca_manager(repos, mock_exchange, mock_notifier, permissive_risk_settings)
+    now = now_iso()
+    grid = DCAGridRecord(
+        grid_id=new_id("grd"), symbol="BTCINR", status=GridStatus.ACTIVE.value,
+        entry_price=100.0, base_investment=500.0, dip_buy_amount=100.0,
+        dip_percentage=5.0, profit_sell_amount=200.0, profit_percentage=5.0,
+        max_levels=5, stop_loss_percentage=20.0, current_level=1,
+        # Dust: below mock_exchange's min_quantity=0.001.
+        total_quantity=0.0003, total_investment=0.03,
+        average_entry_price=100.0, last_buy_price=100.0,
+        next_buy_price=95.0, next_sell_price=105.0,
+        realized_profit=0.0, completed_cycles=0, created_at=now, updated_at=now,
+        trailing_enabled=True, trailing_percentage=3.0, trailing_peak_price=120.0,
+    )
+    await repos.grids.create(grid)
+
+    # Pullback past the trail threshold, triggering _handle_trailing_tick
+    # -> _execute_profit_sell -> dust write-off (position too small to sell).
+    await dca.check_grid_triggers(grid.grid_id, 116.0)
+
+    updated = await repos.grids.get(grid.grid_id)
+    assert updated["status"] == GridStatus.STOPPED.value, "dust write-off must close the grid"
+    assert updated["trailing_peak_price"] is None, "trailing state must reset even when the sell resolves as a dust write-off"
+    orders = await repos.orders.list_for_grid(grid.grid_id)
+    assert not [o for o in orders if o["side"] == "sell"], "no real order should be placed for unsellable dust"

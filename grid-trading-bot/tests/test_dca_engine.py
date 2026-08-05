@@ -500,3 +500,154 @@ class TestClampThenValidateSellFlow:
             min_quantity=0.00001, min_notional=100.0,
         )
         assert retry_order.valid is True
+
+
+# ---------------------------------------------------------------------------
+# clamp_sell_quantity: floating-point precision regression
+#
+# math.floor(qty / step_size) using raw binary floats can silently clamp an
+# EXACT step-boundary quantity down by one whole step, because most decimal
+# step sizes (e.g. 0.00001) have no exact binary representation — e.g.
+# math.floor(5.0 / 1e-5) evaluates to 499999, not 500000. That left a
+# full-position sell (which should zero out to exactly 0.0 remaining) with
+# a leftover residual too small to trade but not exactly zero, which could
+# leave a grid stuck ACTIVE holding unsellable dust after what looked like
+# a fully successful sell. clamp_sell_quantity() now uses Decimal(str(...))
+# arithmetic, matching calculate_quantity_for_inr's existing convention in
+# this same module, instead of raw float division/floor.
+# ---------------------------------------------------------------------------
+
+
+class TestClampSellQuantityFloatingPointPrecision:
+    def test_exact_full_position_sell_at_problematic_step_size(self):
+        # 5.0 / 1e-5 does not land on an exact binary float boundary —
+        # this is the precise case that used to floor to 4.99999.
+        result = clamp_sell_quantity(5.0, 5.0, step_size=1e-5)
+        assert result == 5.0
+
+    @pytest.mark.parametrize("total_qty,step", [
+        (5.0, 1e-5),
+        (0.0003, 1e-5),
+        (0.02, 0.01),
+        (1.0, 0.0001),
+        (0.1, 1e-6),
+        (123.456, 0.001),
+        (7.0, 1e-7),
+    ])
+    def test_quantity_exactly_on_a_step_boundary_has_zero_remainder(self, total_qty, step):
+        clamped = clamp_sell_quantity(total_qty, total_qty, step_size=step)
+        assert clamped == total_qty
+        remainder = total_qty - clamped
+        assert remainder == 0.0
+
+    @pytest.mark.parametrize("nudge", [-1e-13, -1e-12, -1e-11, +1e-13, +1e-12])
+    def test_quantity_extremely_close_to_boundary_due_to_float_noise(self, nudge):
+        # Simulates the kind of tiny representation noise that can
+        # accumulate across several buy/sell fills before a full-position
+        # sell is attempted (e.g. total_quantity read back from the DB as
+        # 4.999999999999999 instead of a clean 5.0).
+        #
+        # This does NOT assert clamped == noisy_total: if noisy_total is
+        # genuinely (if only fractionally) below the true 5.0 boundary,
+        # correctly flooring down within one step is expected, real
+        # step-aligned trading behavior, not a bug. What the fix actually
+        # guarantees is the invariant below — clamping never discards more
+        # than one whole step_size versus the true, noise-free floor.
+        step = 1e-5
+        noisy_total = 5.0 + nudge
+        clamped = clamp_sell_quantity(noisy_total, noisy_total, step_size=step)
+        assert 0 <= noisy_total - clamped < step
+
+    def test_positive_nudge_at_boundary_still_resolves_to_the_full_step(self):
+        # A quantity fractionally ABOVE the true boundary (5.0 + 1e-13)
+        # must still floor to exactly 5.0 — not silently drop to 4.99999
+        # the way the old math.floor()-based implementation did for values
+        # AT or effectively at the boundary.
+        clamped = clamp_sell_quantity(5.0 + 1e-12, 5.0 + 1e-12, step_size=1e-5)
+        assert clamped == 5.0
+
+    def test_below_one_step_still_returns_zero(self):
+        # The fix must not weaken the existing "smaller than one step ->
+        # unsellable" behavior.
+        result = clamp_sell_quantity(0.0000003, 0.0000003, step_size=0.00001)
+        assert result == 0.0
+
+
+class TestFullExitLeavesExactlyZeroRemainder:
+    """End-to-end: manual sell, profit sell, and stop-loss full exits must
+    all leave total_quantity at EXACTLY 0.0 (not a floating-point-noise
+    residual) when the position is a clean multiple of step_size — the
+    real-world scenario the crash-simulation replay test caught."""
+
+    @pytest.fixture
+    def order_manager(self, mock_exchange, repos):
+        from trading.order_manager import OrderManager
+        return OrderManager(mock_exchange, repos)
+
+    @pytest.fixture
+    def dca(self, mock_exchange, repos, order_manager, mock_notifier, permissive_risk_settings):
+        from risk.risk_manager import RiskManager
+        from trading.dca_manager import DCAManager
+        return DCAManager(
+            exchange=mock_exchange, repos=repos, order_manager=order_manager,
+            notifier=mock_notifier, risk=RiskManager(permissive_risk_settings, repos),
+        )
+
+    def _grid(self, **overrides):
+        from config.constants import GridStatus
+        from storage.models import DCAGridRecord
+        from utils.helpers import new_id, now_iso
+        now = now_iso()
+        base = dict(
+            grid_id=new_id("grd"), symbol="BTCINR", status=GridStatus.ACTIVE.value,
+            entry_price=100000.0, base_investment=500000.0, dip_buy_amount=100000.0,
+            dip_percentage=5.0, profit_sell_amount=150000.0, profit_percentage=5.0,
+            max_levels=10, stop_loss_percentage=20.0, current_level=1,
+            # 5.0 units @ a step_size of 1e-5 is exactly the problematic
+            # boundary case from the crash-simulation test that found this.
+            total_quantity=5.0, total_investment=500000.0, average_entry_price=100000.0,
+            last_buy_price=100000.0, next_buy_price=95000.0, next_sell_price=105000.0,
+            realized_profit=0.0, completed_cycles=0, created_at=now, updated_at=now,
+        )
+        base.update(overrides)
+        return DCAGridRecord(**base)
+
+    @pytest.mark.anyio
+    async def test_manual_sell_full_exit_leaves_exactly_zero(self, dca, repos):
+        grid = self._grid()
+        await repos.grids.create(grid)
+
+        result = await dca.manual_sell(grid.grid_id, None)
+        assert result.dust_written_off is False  # a real, clean full sell — not dust
+
+        order = result.order
+        await dca.handle_order_filled(order.order_id, fill_price=100000.0, fill_qty=5.0)
+
+        row = await repos.grids.get(grid.grid_id)
+        assert row["total_quantity"] == 0.0
+
+    @pytest.mark.anyio
+    async def test_profit_sell_full_exit_leaves_exactly_zero(self, dca, repos, mock_exchange):
+        grid = self._grid(profit_sell_amount=500000.0)  # profit_sell_amount >= full position value
+        await repos.grids.create(grid)
+
+        await dca.check_grid_triggers(grid.grid_id, current_price=105000.0)
+        orders = await repos.orders.list_for_grid(grid.grid_id)
+        sell_order = next(o for o in orders if o["side"] == "sell")
+        await dca.handle_order_filled(sell_order["order_id"], fill_price=105000.0, fill_qty=5.0)
+
+        row = await repos.grids.get(grid.grid_id)
+        assert row["total_quantity"] == 0.0
+
+    @pytest.mark.anyio
+    async def test_stop_loss_full_exit_leaves_exactly_zero(self, dca, repos, mock_exchange):
+        grid = self._grid()
+        await repos.grids.create(grid)
+
+        # 20% stop-loss from avg entry 100000 triggers at/below 80000.
+        await dca.check_grid_triggers(grid.grid_id, current_price=79000.0)
+
+        row = await repos.grids.get(grid.grid_id)
+        assert row["total_quantity"] == 0.0
+        from config.constants import GridStatus
+        assert row["status"] == GridStatus.STOPPED.value

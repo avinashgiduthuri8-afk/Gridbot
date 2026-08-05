@@ -76,25 +76,6 @@ def clear_emergency_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def manual_trade_confirm_keyboard(action: str, grid_id: str, amount_token: str) -> InlineKeyboardMarkup:
-    """action is 'buy' or 'sell'; amount_token is either a plain number
-    string or 'all' (sell-everything). Encoded directly in callback_data
-    since /buy and /sell are plain commands, not a ConversationHandler —
-    there's no persisted conversation state to stash this in between the
-    command and the confirmation button press.
-    """
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    "✅ Confirm", callback_data=f"mtrade:{action}:{grid_id}:{amount_token}"
-                ),
-                InlineKeyboardButton("❌ Cancel", callback_data="mtrade:cancel"),
-            ]
-        ]
-    )
-
-
 def trading_mode_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [

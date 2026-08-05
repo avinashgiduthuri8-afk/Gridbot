@@ -79,7 +79,7 @@ async def test_manualbuy_shows_confirmation_without_placing_order(app_context, r
     grid_id = await _seed_grid(app_context, repos)
     stub_app = _stub_app()
     handlers_mod.register_handlers(stub_app, app_context)
-    manualbuy = next(h.callback for h in stub_app.handlers if getattr(h, "command", None) == "manualbuy")
+    manualbuy = next(h.callback for h in stub_app.handlers if "manualbuy" in getattr(h, "commands", set()))
 
     update = FakeUpdate(user_id=111)
     ctx = FakeContext(args=[grid_id, "200"])
@@ -93,13 +93,13 @@ async def test_manualbuy_shows_confirmation_without_placing_order(app_context, r
 async def test_manualbuy_confirm_places_order(app_context, repos):
     stub_app = _stub_app()
     handlers_mod.register_handlers(stub_app, app_context)
-    manualbuy = next(h.callback for h in stub_app.handlers if getattr(h, "command", None) == "manualbuy")
-    mtrade_cb = next(h.callback for h in stub_app.handlers if getattr(h, "pattern", None) == "^mtrade:")
+    manualbuy = next(h.callback for h in stub_app.handlers if "manualbuy" in getattr(h, "commands", set()))
+    mtrade_cb = next(h.callback for h in stub_app.handlers if getattr(getattr(h, "pattern", None), "pattern", None) == "^mtrade:")
 
     grid_id = await _seed_grid(app_context, repos)
     update = FakeUpdate(user_id=111)
     await manualbuy(update, FakeContext(args=[grid_id, "200"]))
-    confirm_data = update.message.markups[-1].rows[0][0].callback_data
+    confirm_data = update.message.markups[-1].inline_keyboard[0][0].callback_data
 
     cb_update = FakeUpdate(user_id=111)
     cb_update.callback_query = FakeCallbackQuery(confirm_data, 111)
@@ -113,13 +113,13 @@ async def test_manualbuy_confirm_places_order(app_context, repos):
 async def test_manualbuy_cancel_places_no_order(app_context, repos):
     stub_app = _stub_app()
     handlers_mod.register_handlers(stub_app, app_context)
-    manualbuy = next(h.callback for h in stub_app.handlers if getattr(h, "command", None) == "manualbuy")
-    mtrade_cb = next(h.callback for h in stub_app.handlers if getattr(h, "pattern", None) == "^mtrade:")
+    manualbuy = next(h.callback for h in stub_app.handlers if "manualbuy" in getattr(h, "commands", set()))
+    mtrade_cb = next(h.callback for h in stub_app.handlers if getattr(getattr(h, "pattern", None), "pattern", None) == "^mtrade:")
 
     grid_id = await _seed_grid(app_context, repos)
     update = FakeUpdate(user_id=111)
     await manualbuy(update, FakeContext(args=[grid_id, "200"]))
-    cancel_data = update.message.markups[-1].rows[0][1].callback_data
+    cancel_data = update.message.markups[-1].inline_keyboard[0][1].callback_data
 
     cb_update = FakeUpdate(user_id=111)
     cb_update.callback_query = FakeCallbackQuery(cancel_data, 111)
@@ -133,15 +133,15 @@ async def test_manualbuy_cancel_places_no_order(app_context, repos):
 async def test_manualsell_no_amount_sells_entire_position(app_context, repos):
     stub_app = _stub_app()
     handlers_mod.register_handlers(stub_app, app_context)
-    manualsell = next(h.callback for h in stub_app.handlers if getattr(h, "command", None) == "manualsell")
-    mtrade_cb = next(h.callback for h in stub_app.handlers if getattr(h, "pattern", None) == "^mtrade:")
+    manualsell = next(h.callback for h in stub_app.handlers if "manualsell" in getattr(h, "commands", set()))
+    mtrade_cb = next(h.callback for h in stub_app.handlers if getattr(getattr(h, "pattern", None), "pattern", None) == "^mtrade:")
 
     grid_id = await _seed_grid(app_context, repos)
     update = FakeUpdate(user_id=111)
     await manualsell(update, FakeContext(args=[grid_id]))
     assert "ENTIRE remaining position" in update.message.replies[-1]
 
-    confirm_data = update.message.markups[-1].rows[0][0].callback_data
+    confirm_data = update.message.markups[-1].inline_keyboard[0][0].callback_data
     assert confirm_data.endswith(":ALL")
 
     cb_update = FakeUpdate(user_id=111)
@@ -153,7 +153,7 @@ async def test_manualsell_no_amount_sells_entire_position(app_context, repos):
 async def test_manualbuy_rejects_malformed_grid_id(app_context, repos):
     stub_app = _stub_app()
     handlers_mod.register_handlers(stub_app, app_context)
-    manualbuy = next(h.callback for h in stub_app.handlers if getattr(h, "command", None) == "manualbuy")
+    manualbuy = next(h.callback for h in stub_app.handlers if "manualbuy" in getattr(h, "commands", set()))
 
     update = FakeUpdate(user_id=111)
     await manualbuy(update, FakeContext(args=["<script>bad", "100"]))
@@ -164,15 +164,15 @@ async def test_manualbuy_rejects_malformed_grid_id(app_context, repos):
 async def test_manualbuy_blocked_by_emergency_stop(app_context, repos):
     stub_app = _stub_app()
     handlers_mod.register_handlers(stub_app, app_context)
-    manualbuy = next(h.callback for h in stub_app.handlers if getattr(h, "command", None) == "manualbuy")
-    mtrade_cb = next(h.callback for h in stub_app.handlers if getattr(h, "pattern", None) == "^mtrade:")
+    manualbuy = next(h.callback for h in stub_app.handlers if "manualbuy" in getattr(h, "commands", set()))
+    mtrade_cb = next(h.callback for h in stub_app.handlers if getattr(getattr(h, "pattern", None), "pattern", None) == "^mtrade:")
 
     grid_id = await _seed_grid(app_context, repos)
     await app_context.risk_manager.trigger_emergency_stop()
 
     update = FakeUpdate(user_id=111)
     await manualbuy(update, FakeContext(args=[grid_id, "500"]))
-    confirm_data = update.message.markups[-1].rows[0][0].callback_data
+    confirm_data = update.message.markups[-1].inline_keyboard[0][0].callback_data
 
     cb_update = FakeUpdate(user_id=111)
     cb_update.callback_query = FakeCallbackQuery(confirm_data, 111)
@@ -187,15 +187,15 @@ async def test_manualbuy_blocked_by_emergency_stop(app_context, repos):
 async def test_manualsell_not_blocked_by_emergency_stop(app_context, repos):
     stub_app = _stub_app()
     handlers_mod.register_handlers(stub_app, app_context)
-    manualsell = next(h.callback for h in stub_app.handlers if getattr(h, "command", None) == "manualsell")
-    mtrade_cb = next(h.callback for h in stub_app.handlers if getattr(h, "pattern", None) == "^mtrade:")
+    manualsell = next(h.callback for h in stub_app.handlers if "manualsell" in getattr(h, "commands", set()))
+    mtrade_cb = next(h.callback for h in stub_app.handlers if getattr(getattr(h, "pattern", None), "pattern", None) == "^mtrade:")
 
     grid_id = await _seed_grid(app_context, repos)
     await app_context.risk_manager.trigger_emergency_stop()
 
     update = FakeUpdate(user_id=111)
     await manualsell(update, FakeContext(args=[grid_id, "300"]))
-    confirm_data = update.message.markups[-1].rows[0][0].callback_data
+    confirm_data = update.message.markups[-1].inline_keyboard[0][0].callback_data
 
     cb_update = FakeUpdate(user_id=111)
     cb_update.callback_query = FakeCallbackQuery(confirm_data, 111)
@@ -210,13 +210,13 @@ async def test_manualsell_not_blocked_by_emergency_stop(app_context, repos):
 async def test_unauthorized_user_rejected_on_confirm_callback(app_context, repos):
     stub_app = _stub_app()
     handlers_mod.register_handlers(stub_app, app_context)
-    manualbuy = next(h.callback for h in stub_app.handlers if getattr(h, "command", None) == "manualbuy")
-    mtrade_cb = next(h.callback for h in stub_app.handlers if getattr(h, "pattern", None) == "^mtrade:")
+    manualbuy = next(h.callback for h in stub_app.handlers if "manualbuy" in getattr(h, "commands", set()))
+    mtrade_cb = next(h.callback for h in stub_app.handlers if getattr(getattr(h, "pattern", None), "pattern", None) == "^mtrade:")
 
     grid_id = await _seed_grid(app_context, repos)
     update = FakeUpdate(user_id=111)
     await manualbuy(update, FakeContext(args=[grid_id, "50"]))
-    confirm_data = update.message.markups[-1].rows[0][0].callback_data
+    confirm_data = update.message.markups[-1].inline_keyboard[0][0].callback_data
 
     cb_update = FakeUpdate(user_id=999)  # not owner (111), not in allowed_ids (222)
     cb_update.callback_query = FakeCallbackQuery(confirm_data, 999)

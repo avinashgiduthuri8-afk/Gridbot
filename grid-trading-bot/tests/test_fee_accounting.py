@@ -74,7 +74,7 @@ async def _sync_filled_order(
     fee: float,
     side: str,
 ) -> None:
-    dca_manager._order_manager._exchange.status_overrides[exchange_order_id] = ExchangeOrder(
+    dca_manager._order_manager._managers["real"]._exchange.status_overrides[exchange_order_id] = ExchangeOrder(
         exchange_order_id=exchange_order_id,
         symbol="BTCINR",
         side=side,
@@ -132,11 +132,7 @@ async def test_sell_fee_only_net_pnl_is_lower(dca_manager, repos):
 
 
 async def test_both_fees_are_applied(dca_manager, repos):
-    grid = _make_grid(
-        total_investment=500.0,
-        total_quantity=0.01,
-        average_entry_price=50000.0,
-    )
+    grid = _make_grid()
     await repos.grids.create(grid)
 
     buy = _make_order(grid.grid_id, "buy", "EXBUY2")

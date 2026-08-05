@@ -31,7 +31,7 @@ def test_grid_list_shows_positive_realized_pnl_percentage():
         _grid(total_investment=1000.0, realized_profit=50.3, mode="real"),
     ])
 
-    assert "Net realized P&amp;L: ₹+50.30 (+5.03%)" in text
+    assert "Realized P&amp;L: ₹+50.30 (+5.03%)" in text
 
 
 def test_grid_list_shows_negative_realized_pnl_percentage():
@@ -39,7 +39,7 @@ def test_grid_list_shows_negative_realized_pnl_percentage():
         _grid(total_investment=500.0, realized_profit=-12.5, mode="real"),
     ])
 
-    assert "Net realized P&amp;L: ₹-12.50 (-2.50%)" in text
+    assert "Realized P&amp;L: ₹-12.50 (-2.50%)" in text
 
 
 def test_grid_list_handles_zero_investment_safely():
@@ -47,7 +47,7 @@ def test_grid_list_handles_zero_investment_safely():
         _grid(total_investment=0.0, realized_profit=7.25, mode="real"),
     ])
 
-    assert "Net realized P&amp;L: ₹+7.25 (+0.00%)" in text
+    assert "Realized P&amp;L: ₹+7.25 (+0.00%)" in text
 
 
 def test_paper_grids_show_partial_sell_breakdown_and_portfolio_return():

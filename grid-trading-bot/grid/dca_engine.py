@@ -15,7 +15,6 @@ DCA grid logic:
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN, ROUND_UP
 
@@ -464,13 +463,25 @@ def clamp_sell_quantity(
 ) -> float:
     """Ensure sell qty does not exceed what the grid holds, rounded down.
 
+    Uses Decimal arithmetic (matching calculate_quantity_for_inr elsewhere
+    in this module) rather than raw float division/floor. Binary floating
+    point cannot represent most decimal step sizes exactly (e.g. 1e-5), so
+    `math.floor(5.0 / 1e-5)` can evaluate to 499999 instead of 500000 —
+    silently clamping an EXACT step-boundary quantity (a full-position
+    sell that should leave zero remainder) down by one whole step. That
+    residual is too small to trade (below the exchange's min_quantity) but
+    not exactly zero, so it wasn't caught as a clean "position closed" and
+    could leave a grid stuck ACTIVE holding unsellable dust after what
+    looked like a fully successful sell.
+
     Returns 0.0 if the clamped result is less than step_size.
     """
-    qty = min(desired_quantity, available_quantity)
+    d_qty = min(Decimal(str(desired_quantity)), Decimal(str(available_quantity)))
     if step_size > 0:
-        steps = math.floor(qty / step_size)
-        qty = round(steps * step_size, 10)
-    return max(qty, 0.0)
+        d_step = Decimal(str(step_size))
+        n_steps = int(d_qty / d_step)  # equivalent to floor for non-negative values
+        d_qty = Decimal(n_steps) * d_step
+    return max(float(d_qty), 0.0)
 
 
 # ---------------------------------------------------------------------------
