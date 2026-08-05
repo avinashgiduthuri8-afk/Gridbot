@@ -41,3 +41,9 @@ timeoutMs = 20000
 
 [nix]
 channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+TELEGRAM_ALLOWED_USER_IDS = "476738400"
+TELEGRAM_CHAT_ID = "476738400"
