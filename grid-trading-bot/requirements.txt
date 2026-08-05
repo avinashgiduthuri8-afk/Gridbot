@@ -1,5 +1,6 @@
 python-telegram-bot==22.7
 httpx==0.28.1
+requests==2.32.3
 aiosqlite==0.22.1
 python-dotenv==1.2.2
 tenacity==9.1.4
@@ -12,5 +13,7 @@ uvicorn==0.51.0
 pydantic==2.13.4
 # Optional — only required if GDRIVE_BACKUP_ENABLED=true
 google-auth==2.35.0
+google-auth-oauthlib==1.2.1
+google-api-python-client==2.149.0
 # Optional — only required if WEBHOOK_ENABLED=true
 aiohttp==3.11.11
