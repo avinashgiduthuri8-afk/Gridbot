@@ -12,5 +12,24 @@
   "devDependencies": {
     "prettier": "^3.8.4",
     "typescript": "~5.9.3"
+  },
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/avinashgiduthuri8-afk/Gridbot.git"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/avinashgiduthuri8-afk/Gridbot/issues"
+  },
+  "homepage": "https://github.com/avinashgiduthuri8-afk/Gridbot#readme",
+  "dependencies": {
+    "diff": "^9.0.0",
+    "isomorphic-git": "^1.40.0"
   }
 }

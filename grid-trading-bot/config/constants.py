@@ -9,6 +9,7 @@ from enum import Enum
 class GridStatus(str, Enum):
     ACTIVE = "active"
     PAUSED = "paused"
+    STOPPING = "stopping"
     STOPPED = "stopped"
     COMPLETED = "completed"
 

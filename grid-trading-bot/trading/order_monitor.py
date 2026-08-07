@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 
-from config.constants import OrderStatus
+from config.constants import GridStatus, OrderStatus
 from exchange.base import ExchangeClient
 from exchange.exceptions import ExchangeError, ExchangeRateLimitError
 from notifications.notifier import Notifier
@@ -219,6 +219,14 @@ class OrderMonitor:
                         side=refreshed.side,
                         mode=mode,
                     )
+                    # If this was a pending stop-loss attempt, roll the grid back
+                    # to ACTIVE so normal processing can resume.
+                    try:
+                        if grid and grid.get("status") == GridStatus.STOPPING.value:
+                            await self._repos.grids.update_status(refreshed.grid_id, GridStatus.ACTIVE.value)
+                            await self._notifier.grid_resumed(symbol=refreshed.symbol, grid_id=refreshed.grid_id)
+                    except Exception:  # noqa: BLE001
+                        log.exception("Failed to roll back STOPPING grid %s after order cancelled", refreshed.grid_id)
 
     # ------------------------------------------------------------------
     # Periodic full exchange sync

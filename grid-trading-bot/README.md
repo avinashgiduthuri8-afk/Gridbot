@@ -450,7 +450,7 @@ WEBHOOK_ENABLED=true
 WEBHOOK_HOST=0.0.0.0
 WEBHOOK_PORT=8080
 WEBHOOK_PATH=/webhooks/coindcx/order-update
-WEBHOOK_SECRET=            # falls back to COINDCX_API_SECRET if left blank
+WEBHOOK_SECRET=            # Required if WEBHOOK_ENABLED=true. Do NOT reuse COINDCX_API_SECRET.
 ```
 Then point CoinDCX's webhook configuration (once you've confirmed the real
 signature/payload format against their docs and adjusted

@@ -57,9 +57,9 @@ class RecoveryManager:
         log.info("Starting recovery sequence...")
 
         active_grids = await self._repos.grids.list_by_status(
-            [GridStatus.ACTIVE.value, GridStatus.PAUSED.value]
+            [GridStatus.ACTIVE.value, GridStatus.PAUSED.value, GridStatus.STOPPING.value]
         )
-        log.info("Recovery: found %d active/paused grid(s)", len(active_grids))
+        log.info("Recovery: found %d active/paused/stopping grid(s)", len(active_grids))
 
         submitted_reconciled = await self._reconcile_submitted_orders()
         reconciled, fills_recovered = await self._reconcile_open_orders()

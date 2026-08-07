@@ -1080,6 +1080,7 @@ class DCAManager:
         mode: str = grid.get("mode", "real")
 
         if total_qty <= 0:
+            # Nothing to sell — already effectively closed.
             await self._repos.grids.update_status(grid_id, GridStatus.STOPPED.value)
             return
 
@@ -1092,16 +1093,8 @@ class DCAManager:
 
         pnl = (current_price - avg_entry) * sell_qty
 
-        # A stop-loss is always a FINAL, full-position exit — unlike a
-        # partial profit sell (which can retry a later, smaller clamp on a
-        # future trigger if there's real quantity left), there's no "try
-        # again later" for a stop-loss. If the clamped remainder fails the
-        # shared rule check (e.g. it's an unsellable "dust" amount below
-        # min_quantity/min_notional), we cannot leave the grid open forever
-        # waiting for a sell that will never clear — write the position off
-        # as dust, notify, and close the grid. (Profit-sell has the same
-        # write-off for the equivalent case — see _execute_profit_sell —
-        # when its clamp also reduces to the entire remaining position.)
+        # Validate the clamped quantity — if it's unsellable dust, write off
+        # and close the grid immediately as before.
         if market_info is not None:
             check = validate_quantity(
                 sell_qty, current_price,
@@ -1125,7 +1118,11 @@ class DCAManager:
                 return
 
         try:
-            await self._order_manager.place_dca_order(
+            # Capture returned order record — if the exchange reports an
+            # immediate FILLED response (common in test/mocked drivers),
+            # process the fill synchronously so grids reflect the fill without
+            # waiting for the monitor.
+            order = await self._order_manager.place_dca_order(
                 grid_id=grid_id,
                 symbol=symbol,
                 side="sell",
@@ -1139,21 +1136,47 @@ class DCAManager:
             await self._notifier.error(f"Stop loss {symbol}", str(exc))
             return
 
+        # If the exchange returned FILLED immediately, apply the fill now so
+        # the grid is finalized and notifications are sent. Otherwise mark the
+        # grid as STOPPING and wait for the monitor/recovery to finalize it.
+        if getattr(order, "status", None) == OrderStatus.FILLED.value:
+            # Synchronous fill — process through the same handler as the monitor.
+            fill_price = getattr(order, "filled_price", order.price)
+            fill_qty = getattr(order, "filled_quantity", order.quantity)
+            log.info(
+                "Stop loss placed and FILLED synchronously: grid=%s order=%s qty=%.8f @ ₹%.2f",
+                grid_id, order.order_id, fill_qty, fill_price,
+            )
+            try:
+                await self.handle_order_filled(order.order_id, fill_price=fill_price, fill_qty=fill_qty)
+            except Exception:  # noqa: BLE001
+                log.exception("handle_order_filled failed for stop-loss immediate fill %s", order.order_id)
+            return
+
+        # Mark the grid as STOPPING so we're explicit about waiting for the
+        # exchange confirmation. Do not zero holdings until the fill is
+        # actually confirmed via handle_order_filled.
         await self._repos.grids.update_state(
             grid_id,
-            status=GridStatus.STOPPED.value,
-            total_quantity=0.0,
-            total_investment=0.0,
+            status=GridStatus.STOPPING.value,
         )
-        await self._notifier.stop_loss_triggered(
-            symbol=symbol,
-            grid_id=grid_id,
-            sell_price=current_price,
-            avg_entry_price=avg_entry,
-            quantity=sell_qty,
-            pnl=pnl,
-        )
-        log.warning("Stop loss executed for %s, sold %.8f @ ₹%.2f", grid_id, sell_qty, current_price)
+
+        # Notify that an order was submitted for this stop-loss.
+        try:
+            await self._notifier.order_submitted(
+                symbol=symbol,
+                grid_id=grid_id,
+                order_id=order.order_id if hasattr(order, "order_id") else "(unknown)",
+                side="sell",
+                quantity=sell_qty,
+                price=current_price,
+                mode=mode,
+            )
+        except Exception:
+            # Never fail the stop-loss flow because notification failed.
+            log.debug("Notifier.order_submitted failed for stop-loss on %s", grid_id)
+
+        log.warning("Stop loss sell submitted for %s, awaiting confirmation", grid_id)
 
     # ------------------------------------------------------------------
     # Private: fill event handlers
@@ -1251,12 +1274,19 @@ class DCAManager:
         new_cycles = grid["completed_cycles"] + 1
         proceeds_inr = fill_qty * fill_price
 
-        if new_total_qty <= 0:
+        # If this sell was the stop-loss sell (grid explicitly marked STOPPING),
+        # finalize the grid as STOPPED only after the FILLED confirmation.
+        if grid.get("status") == GridStatus.STOPPING.value:
+            # Stop-loss implies a full or terminal exit — treat as STOPPED.
             new_next_sell = 0.0
-            new_status = GridStatus.COMPLETED.value
+            new_status = GridStatus.STOPPED.value
         else:
-            new_next_sell = calculate_profit_target(avg_entry, grid["profit_percentage"])
-            new_status = grid["status"]
+            if new_total_qty <= 0:
+                new_next_sell = 0.0
+                new_status = GridStatus.COMPLETED.value
+            else:
+                new_next_sell = calculate_profit_target(avg_entry, grid["profit_percentage"])
+                new_status = grid["status"]
 
         await self._repos.grids.update_state(
             grid_id,
@@ -1297,17 +1327,29 @@ class DCAManager:
             grid_id, fill_qty, fill_price, pnl, fee, net_pnl, new_realized,
         )
 
-        await self._notifier.profit_sell_executed(
-            symbol=symbol,
-            grid_id=grid_id,
-            quantity=fill_qty,
-            sell_price=fill_price,
-            avg_entry_price=avg_entry,
-            pnl=net_pnl,
-            total_realized=new_realized,
-            cycles=new_cycles,
-            next_sell_price=new_next_sell,
-        )
+        # Notify appropriately depending on whether this was a stop-loss or
+        # a normal profit sell.
+        if grid.get("status") == GridStatus.STOPPING.value:
+            await self._notifier.stop_loss_triggered(
+                symbol=symbol,
+                grid_id=grid_id,
+                sell_price=fill_price,
+                avg_entry_price=avg_entry,
+                quantity=fill_qty,
+                pnl=net_pnl,
+            )
+        else:
+            await self._notifier.profit_sell_executed(
+                symbol=symbol,
+                grid_id=grid_id,
+                quantity=fill_qty,
+                sell_price=fill_price,
+                avg_entry_price=avg_entry,
+                pnl=net_pnl,
+                total_realized=new_realized,
+                cycles=new_cycles,
+                next_sell_price=new_next_sell,
+            )
 
         if new_status == GridStatus.COMPLETED.value:
             await self._notifier.grid_completed(symbol, grid_id, new_cycles, new_realized)

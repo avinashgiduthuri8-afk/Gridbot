@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 import io
-import os
 
 from telegram import InputFile, Update
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
@@ -65,8 +64,7 @@ HELP_TEXT = (
     "/monitor — price monitor status and active coins\n"
     "/monitor &lt;seconds&gt; — change refresh interval (2/5/10/15/30)\n"
     "/export — download full trade history as CSV\n"
-    "/backup — download raw SQLite database\n"
-    "/backupstatus — check automatic Google Drive backup status (if enabled)\n"
+    "\n"    "/backupstatus — check automatic Google Drive backup status (if enabled)\n"
     "/restorelist [page] — browse available Google Drive backups (newest first, 10 per page)\n"
     "/verifybackup &lt;number|latest&gt; — download and verify a backup is intact "
     "and restorable (integrity check + confirms core tables are present)\n"
@@ -393,17 +391,10 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
 
     @authorized
     async def backup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        db_path = app_context.settings.database_path
-        if not os.path.exists(db_path):
-            await update.message.reply_text("Database file not found — no data yet.")
-            return
-        size_kb = os.path.getsize(db_path) / 1024
-        filename = f"dca_bot_backup_{now_iso()[:10]}.db"
-        with open(db_path, "rb") as f:
-            await update.message.reply_document(
-                document=InputFile(f, filename=filename),
-                caption=f"SQLite backup ({size_kb:.1f} KB). Keep it safe — contains all grids and history.",
-            )
+        # Disabled: sending raw SQLite database via Telegram is a security risk.
+        await update.message.reply_text(
+            "Database backup via Telegram has been disabled for security reasons."
+        )
 
     @authorized
     async def backupstatus_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

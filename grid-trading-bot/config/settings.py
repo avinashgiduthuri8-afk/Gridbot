@@ -163,15 +163,12 @@ def load_settings() -> Settings:
         host=os.getenv("WEBHOOK_HOST", "0.0.0.0").strip(),
         port=_get_int("WEBHOOK_PORT", 8080),
         path=os.getenv("WEBHOOK_PATH", "/webhooks/coindcx/order-update").strip(),
-        # Falls back to the CoinDCX API secret if no dedicated webhook secret
-        # is set — see webhooks/server.py's module docstring for why this is
-        # a starting assumption to verify, not a confirmed CoinDCX behavior.
-        secret=os.getenv("WEBHOOK_SECRET", "").strip() or os.getenv("COINDCX_API_SECRET", "").strip(),
+        # Webhook secret must be provided explicitly; never fall back to the CoinDCX API secret.
+        secret=os.getenv("WEBHOOK_SECRET", "").strip(),
     )
     if webhook_enabled and not webhook.secret:
         raise ConfigError(
-            "WEBHOOK_ENABLED=true requires WEBHOOK_SECRET (or COINDCX_API_SECRET as a "
-            "fallback) to be set, so incoming webhook requests can be authenticated."
+            "WEBHOOK_ENABLED=true requires WEBHOOK_SECRET to be set. Do not reuse COINDCX_API_SECRET."
         )
 
     return Settings(
