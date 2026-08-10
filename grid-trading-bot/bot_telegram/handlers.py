@@ -449,7 +449,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
             if last_error_at:
                 # Only worth surfacing prominently if it's more recent than
                 # the last success — otherwise it's a stale, already-resolved failure.
-                is_more_recent = (not last_success_at) or (last_error_at > last_success_at)
+                is_more_recent = (not last_success_at) or (last_error_at >= last_success_at)
                 marker = "🔴" if is_more_recent else "ℹ️"
                 lines.append(f"\n{marker} Last error: {_time_ago(last_error_at)}")
                 lines.append(f"   {last_error_msg}")

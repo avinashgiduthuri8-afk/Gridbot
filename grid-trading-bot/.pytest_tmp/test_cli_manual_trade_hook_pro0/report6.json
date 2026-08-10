@@ -28,7 +28,7 @@
     "cpu_percent": null,
     "exception_count": 0,
     "db_size_bytes": 963896,
-    "replay_duration_seconds": 0.5459999999984575
+    "replay_duration_seconds": 0.7190000000009604
   },
   "validation": {
     "all_passed": true,
