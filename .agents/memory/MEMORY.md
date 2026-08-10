@@ -1,3 +1,4 @@
-- [Batch fixes overview](batch-fixes-overview.md) — batches 1–4 applied; 335 tests pass; roadmap in replit.md
-- [Ticker cache design](ticker-cache.md) — TTL=1.5s, single-flight asyncio.Lock, constructor param; safe down to 2s poll
-- [Uncertain order resolution](uncertain-order-resolution.md) — exchange query failure must defer (leave SUBMITTED), not mark FAILED
+- [Price Monitor Architecture](price-monitor.md) — PriceMonitor replaces bare loop; batch ticker fetch; SQLite interval; api_ok managed inside _run_cycle only.
+- [Log channels](log-channels.md) — Only 6 valid channels: trading, exchange, telegram, database, grid, errors. New modules must use one of these.
+- [Coin Validator & MarketInfo](coin-validator.md) — CoinValidator wraps exchange; MarketInfo has status/is_active; backward-compat defaults; Decimal qty calc in dca_engine.
+- [Grid Validation Flow](grid-validation.md) — conversations.py confirm() validates pair+investments before start_grid; CoinValidator owns all validation logic.

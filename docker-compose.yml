@@ -1,0 +1,27 @@
+services:
+  gridbot:
+    build: .
+    container_name: dca-gridbot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Bind mounts (not named volumes) so the SQLite DB and logs are easy
+      # to find, back up, or inspect directly from the host — matches the
+      # relative paths DATABASE_PATH=data/grid_bot.db and LOG_DIR=logs
+      # already default to in .env.example. See README's "Persistent
+      # database across redeploys" section: recreating this container
+      # (docker compose up --build) reuses these same host directories,
+      # so grid state survives rebuilds/restarts as long as ./data isn't
+      # deleted.
+      - ./data:/app/data
+      - ./logs:/app/logs
+      # Mount your real Google Drive service-account key read-only if
+      # GDRIVE_BACKUP_ENABLED=true, at whatever path GDRIVE_SERVICE_ACCOUNT_JSON
+      # points to inside the container. Example (uncomment and adjust):
+      # - ./gdrive-key.json:/app/gdrive-key.json:ro
+    # No ports published by default. If you enable the optional CoinDCX
+    # webhook receiver (WEBHOOK_ENABLED=true in .env), uncomment and adjust
+    # to match WEBHOOK_PORT:
+    # ports:
+    #   - "8080:8080"
