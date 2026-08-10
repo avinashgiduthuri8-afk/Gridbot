@@ -787,29 +787,50 @@ class DCAManager:
         grid_id: str = order["grid_id"]
 
         async with self._grid_lock(grid_id):
-            # Idempotency check must live inside the lock so that two concurrent
-            # callers cannot both pass the guard and then each apply the fill.
-            existing_trade = await self._repos.trade_history.get_by_order_id(order_id)
-            if existing_trade:
-                log.info(
-                    "handle_order_filled: fill for order %s already recorded "
-                    "(trade %s) — skipping to prevent double-apply",
-                    order_id, existing_trade["trade_id"],
-                )
+            await self._handle_order_filled_locked(
+                order_id, fill_price, fill_qty, order=order
+            )
+
+    async def _handle_order_filled_locked(
+        self,
+        order_id: str,
+        fill_price: float,
+        fill_qty: float,
+        order: dict | None = None,
+    ) -> None:
+        """Inner implementation — must be called while holding _grid_lock(grid_id)."""
+        if order is None:
+            order = await self._repos.orders.get(order_id)
+            if not order:
+                log.warning("handle_order_filled called for unknown order %s", order_id)
                 return
 
-            grid = await self._repos.grids.get(grid_id)
-            if not grid:
-                log.warning("Order %s belongs to missing grid %s", order_id, grid_id)
-                return
+        grid_id: str = order["grid_id"]
 
-            actual_price = fill_price if fill_price > 0 else order["price"]
-            actual_qty = fill_qty if fill_qty > 0 else order["quantity"]
+        # Idempotency check must live inside the lock so that two concurrent
+        # callers cannot both pass the guard and then each apply the fill.
+        existing_trade = await self._repos.trade_history.get_by_order_id(order_id)
+        if existing_trade:
+            log.info(
+                "handle_order_filled: fill for order %s already recorded "
+                "(trade %s) — skipping to prevent double-apply",
+                order_id,
+                existing_trade["trade_id"],
+            )
+            return
 
-            if order["side"] == "buy":
-                await self._on_buy_filled(grid, order, order_id, actual_price, actual_qty)
-            else:
-                await self._on_sell_filled(grid, order, order_id, actual_price, actual_qty)
+        grid = await self._repos.grids.get(grid_id)
+        if not grid:
+            log.warning("Order %s belongs to missing grid %s", order_id, grid_id)
+            return
+
+        actual_price = fill_price if fill_price > 0 else order["price"]
+        actual_qty = fill_qty if fill_qty > 0 else order["quantity"]
+
+        if order["side"] == "buy":
+            await self._on_buy_filled(grid, order, order_id, actual_price, actual_qty)
+        else:
+            await self._on_sell_filled(grid, order, order_id, actual_price, actual_qty)
 
     # ------------------------------------------------------------------
     # Private: order execution helpers
@@ -1136,9 +1157,15 @@ class DCAManager:
             await self._notifier.error(f"Stop loss {symbol}", str(exc))
             return
 
+        # Mark the grid as STOPPING so we're explicit about stop-loss execution.
+        await self._repos.grids.update_state(
+            grid_id,
+            status=GridStatus.STOPPING.value,
+        )
+
         # If the exchange returned FILLED immediately, apply the fill now so
-        # the grid is finalized and notifications are sent. Otherwise mark the
-        # grid as STOPPING and wait for the monitor/recovery to finalize it.
+        # the grid is finalized and notifications are sent. Otherwise wait for
+        # the monitor/recovery to finalize it.
         if getattr(order, "status", None) == OrderStatus.FILLED.value:
             # Synchronous fill — process through the same handler as the monitor.
             fill_price = getattr(order, "filled_price", order.price)
@@ -1148,18 +1175,10 @@ class DCAManager:
                 grid_id, order.order_id, fill_qty, fill_price,
             )
             try:
-                await self.handle_order_filled(order.order_id, fill_price=fill_price, fill_qty=fill_qty)
+                await self._handle_order_filled_locked(order.order_id, fill_price=fill_price, fill_qty=fill_qty)
             except Exception:  # noqa: BLE001
                 log.exception("handle_order_filled failed for stop-loss immediate fill %s", order.order_id)
             return
-
-        # Mark the grid as STOPPING so we're explicit about waiting for the
-        # exchange confirmation. Do not zero holdings until the fill is
-        # actually confirmed via handle_order_filled.
-        await self._repos.grids.update_state(
-            grid_id,
-            status=GridStatus.STOPPING.value,
-        )
 
         # Notify that an order was submitted for this stop-loss.
         try:

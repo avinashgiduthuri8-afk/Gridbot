@@ -651,3 +651,93 @@ class TestFullExitLeavesExactlyZeroRemainder:
         assert row["total_quantity"] == 0.0
         from config.constants import GridStatus
         assert row["status"] == GridStatus.STOPPED.value
+
+
+class TestStopLossSynchronousFillDeadlockFix:
+    def _grid(self, **overrides):
+        from config.constants import GridStatus
+        from storage.models import DCAGridRecord
+        from utils.helpers import new_id, now_iso
+        now = now_iso()
+        base = dict(
+            grid_id=new_id("grd"), symbol="BTCINR", status=GridStatus.ACTIVE.value,
+            entry_price=100000.0, base_investment=500000.0, dip_buy_amount=100000.0,
+            dip_percentage=5.0, profit_sell_amount=150000.0, profit_percentage=5.0,
+            max_levels=10, stop_loss_percentage=20.0, current_level=1,
+            total_quantity=5.0, total_investment=500000.0, average_entry_price=100000.0,
+            last_buy_price=100000.0, next_buy_price=95000.0, next_sell_price=105000.0,
+            realized_profit=0.0, completed_cycles=0, created_at=now, updated_at=now,
+        )
+        base.update(overrides)
+        return DCAGridRecord(**base)
+
+    @pytest.mark.anyio
+    async def test_synchronous_stop_loss_fill_no_deadlock_and_stopped_state(self, dca_manager, repos, mock_exchange):
+        """Verify synchronous stop-loss fill does not deadlock, grid reaches STOPPED state,
+
+        order is FILLED, and trade_history is recorded exactly once.
+        """
+        grid = self._grid()
+        await repos.grids.create(grid)
+
+        # Triggers stop-loss where mock_exchange.place_order returns immediate OrderStatus.FILLED
+        await dca_manager.check_grid_triggers(grid.grid_id, current_price=79000.0)
+
+        # 1. Grid reaches expected STOPPED state & total_quantity zeroed
+        row = await repos.grids.get(grid.grid_id)
+        assert row["status"] == "stopped"
+        assert row["total_quantity"] == 0.0
+
+        # 2. Order state is correct
+        orders = await repos.orders.list_for_grid(grid.grid_id)
+        sl_order = next(o for o in orders if o["side"] == "sell")
+        assert sl_order["status"] == "filled"
+
+        # 3. Trade history is recorded exactly once
+        trades = await repos.trade_history.list_for_grid(grid.grid_id)
+        assert len(trades) == 1
+        assert trades[0]["order_id"] == sl_order["order_id"]
+
+    @pytest.mark.anyio
+    async def test_async_stop_loss_fill_remains_unchanged(self, dca_manager, repos, mock_exchange, monkeypatch):
+        """Verify normal asynchronous stop-loss fill behavior (where place_order returns open order)
+
+        transitions to STOPPING state first, and then handle_order_filled finalizes to STOPPED state.
+        """
+        grid = self._grid()
+        grid.grid_id = "grd_sl_async"
+        await repos.grids.create(grid)
+
+        # Monkeypatch mock_exchange.place_order to return an OPEN order instead of FILLED
+        orig_place_order = mock_exchange.place_order
+        async def mock_open_place_order(*args, **kwargs):
+            order = await orig_place_order(*args, **kwargs)
+            order.status = "open"
+            return order
+
+        monkeypatch.setattr(mock_exchange, "place_order", mock_open_place_order)
+
+        # Trigger stop loss
+        await dca_manager.check_grid_triggers(grid.grid_id, current_price=79000.0)
+
+        # Grid should be in STOPPING state waiting for fill
+        row = await repos.grids.get(grid.grid_id)
+        assert row["status"] == "stopping"
+
+        # Find submitted order
+        orders = await repos.orders.list_for_grid(grid.grid_id)
+        sl_order = next(o for o in orders if o["side"] == "sell")
+
+        # Now simulate asynchronous fill from OrderMonitor
+        await dca_manager.handle_order_filled(sl_order["order_id"], fill_price=79000.0, fill_qty=5.0)
+
+        # Grid is now STOPPED
+        row_final = await repos.grids.get(grid.grid_id)
+        assert row_final["status"] == "stopped"
+        assert row_final["total_quantity"] == 0.0
+
+        # Trade history recorded exactly once
+        trades = await repos.trade_history.list_for_grid(grid.grid_id)
+        assert len(trades) == 1
+        assert trades[0]["order_id"] == sl_order["order_id"]
+

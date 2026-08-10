@@ -18,3 +18,5 @@ google-auth-oauthlib==1.2.1
 google-api-python-client==2.149.0
 # Optional — only required if WEBHOOK_ENABLED=true
 aiohttp==3.11.11
+# Replay engine
+pandas==2.2.3

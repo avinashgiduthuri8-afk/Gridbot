@@ -13,4 +13,5 @@ dependencies = [
     "python-telegram-bot==22.7",
     "pytz==2026.2",
     "tenacity==9.1.4",
+    "pandas==2.2.3",
 ]

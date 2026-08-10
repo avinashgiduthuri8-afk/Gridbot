@@ -1,0 +1,83 @@
+{
+  "replay": {
+    "symbols": [
+      "BTCINR"
+    ],
+    "start_timestamp": 0.0,
+    "end_timestamp": 11940.0,
+    "candles_processed": 200,
+    "sub_ticks_processed": 800,
+    "trigger_evaluations": 0,
+    "speed": null
+  },
+  "trading": {
+    "total_buys": 0,
+    "total_sells": 0,
+    "total_dust_writeoffs": 0,
+    "total_realized_profit": 0,
+    "win_rate_pct": 0.0,
+    "max_drawdown_pct": 0.0,
+    "profit_factor": null,
+    "completed_cycles": 0,
+    "trailing_activations": 0,
+    "stop_loss_activations": 0,
+    "manual_trades": 0
+  },
+  "system": {
+    "peak_rss_mb": null,
+    "cpu_percent": null,
+    "exception_count": 0,
+    "db_size_bytes": 292336,
+    "replay_duration_seconds": 0.2029999999977008
+  },
+  "validation": {
+    "all_passed": true,
+    "checks": [
+      {
+        "name": "no_active_grid_with_zero_quantity",
+        "passed": true,
+        "detail": "ok"
+      },
+      {
+        "name": "no_negative_quantity",
+        "passed": true,
+        "detail": "ok"
+      },
+      {
+        "name": "no_negative_investment",
+        "passed": true,
+        "detail": "ok"
+      },
+      {
+        "name": "no_orphan_orders",
+        "passed": true,
+        "detail": "ok"
+      },
+      {
+        "name": "no_duplicate_exchange_order_ids",
+        "passed": true,
+        "detail": "ok"
+      },
+      {
+        "name": "trade_history_references_valid_grids",
+        "passed": true,
+        "detail": "ok"
+      },
+      {
+        "name": "completed_cycles_backed_by_sell_history",
+        "passed": true,
+        "detail": "ok"
+      },
+      {
+        "name": "stopped_grids_no_negative_remainder",
+        "passed": true,
+        "detail": "ok"
+      },
+      {
+        "name": "no_zombie_grids",
+        "passed": true,
+        "detail": "ok"
+      }
+    ]
+  }
+}
