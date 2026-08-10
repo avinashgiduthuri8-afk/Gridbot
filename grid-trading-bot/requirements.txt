@@ -1,5 +1,6 @@
 python-telegram-bot==22.7
 httpx==0.28.1
+httpx2
 requests==2.32.3
 aiosqlite==0.22.1
 python-dotenv==1.2.2

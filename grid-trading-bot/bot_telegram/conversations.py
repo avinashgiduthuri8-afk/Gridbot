@@ -14,6 +14,8 @@ Default Grid steps:
 
 from __future__ import annotations
 
+import warnings
+
 from telegram import Update
 from telegram.ext import (
     CallbackQueryHandler,
@@ -675,27 +677,39 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
     # Build handler
     # ------------------------------------------------------------------
 
-    return ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex(r"^/newgrid$"), start)],
-        states={
-            GRID_SETUP_MODE: [CallbackQueryHandler(grid_setup_mode_chosen, pattern="^grid_setup_mode:")],
-            DEFAULT_COIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, default_coin_entered)],
-            SELECT_COIN: [CallbackQueryHandler(coin_chosen, pattern="^pick_coin:")],
-            CUSTOM_COIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, custom_coin_entered)],
-            ENTRY_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, entry_price_entered)],
-            BASE_INVESTMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, base_investment_entered)],
-            DIP_BUY_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, dip_buy_amount_entered)],
-            DIP_PERCENTAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, dip_percentage_entered)],
-            PROFIT_SELL_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, profit_sell_amount_entered)],
-            PROFIT_PERCENTAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, profit_percentage_entered)],
-            MAX_LEVELS: [MessageHandler(filters.TEXT & ~filters.COMMAND, max_levels_entered)],
-            STOP_LOSS: [MessageHandler(filters.TEXT & ~filters.COMMAND, stop_loss_entered)],
-            TRAILING_CHOICE: [CallbackQueryHandler(trailing_choice_selected, pattern="^trailing_choice:")],
-            TRAILING_PERCENTAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, trailing_percentage_entered)],
-            SELECT_MODE: [CallbackQueryHandler(mode_selected, pattern="^pick_mode:")],
-            CONFIRM: [CallbackQueryHandler(confirm, pattern="^confirm_grid:")],
-        },
-        fallbacks=[MessageHandler(filters.Regex(r"^/cancel$"), cancel)],
-        name="newgrid_conversation",
-        persistent=False,
-    )
+    # Suppress PTB's informational warning about per_message=False.
+    # per_message=False is correct here: this conversation mixes
+    # MessageHandler (entry_points, fallbacks, text-input states) with
+    # CallbackQueryHandler (inline-button states).  Setting per_message=True
+    # would require ALL handlers to be CallbackQueryHandler, which would
+    # break the flow.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="If 'per_message=False'",
+            category=UserWarning,
+        )
+        return ConversationHandler(
+            entry_points=[MessageHandler(filters.Regex(r"^/newgrid$"), start)],
+            states={
+                GRID_SETUP_MODE: [CallbackQueryHandler(grid_setup_mode_chosen, pattern="^grid_setup_mode:")],
+                DEFAULT_COIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, default_coin_entered)],
+                SELECT_COIN: [CallbackQueryHandler(coin_chosen, pattern="^pick_coin:")],
+                CUSTOM_COIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, custom_coin_entered)],
+                ENTRY_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, entry_price_entered)],
+                BASE_INVESTMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, base_investment_entered)],
+                DIP_BUY_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, dip_buy_amount_entered)],
+                DIP_PERCENTAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, dip_percentage_entered)],
+                PROFIT_SELL_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, profit_sell_amount_entered)],
+                PROFIT_PERCENTAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, profit_percentage_entered)],
+                MAX_LEVELS: [MessageHandler(filters.TEXT & ~filters.COMMAND, max_levels_entered)],
+                STOP_LOSS: [MessageHandler(filters.TEXT & ~filters.COMMAND, stop_loss_entered)],
+                TRAILING_CHOICE: [CallbackQueryHandler(trailing_choice_selected, pattern="^trailing_choice:")],
+                TRAILING_PERCENTAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, trailing_percentage_entered)],
+                SELECT_MODE: [CallbackQueryHandler(mode_selected, pattern="^pick_mode:")],
+                CONFIRM: [CallbackQueryHandler(confirm, pattern="^confirm_grid:")],
+            },
+            fallbacks=[MessageHandler(filters.Regex(r"^/cancel$"), cancel)],
+            name="newgrid_conversation",
+            persistent=False,
+        )
