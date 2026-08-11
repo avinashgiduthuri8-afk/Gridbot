@@ -22,14 +22,21 @@ A production-ready Python bot that runs manual grid trading strategies on [CoinD
 grid-trading-bot/
 ├── main.py                  # Entrypoint — wires everything together
 ├── config/settings.py       # Loads all config from env vars
-├── bot_telegram/            # Telegram command handlers, keyboards, formatters
+├── bot_telegram/            # Telegram command handlers, keyboards, conversations, formatters
 ├── trading/                 # Core engine: DCA manager, order monitor, price monitor, recovery
 ├── exchange/                # CoinDCX API client (+ paper exchange stub)
-├── grid/                    # Grid price generation (arithmetic/geometric)
-├── risk/                    # Risk manager (capital limits, daily loss halts)
-├── storage/                 # SQLite database, models, repositories
+├── grid/                    # Grid price generation + DCA engine (arithmetic/geometric)
+├── risk/                    # Risk manager (capital limits, exposure caps, daily loss halts)
+├── storage/                 # SQLite database, schema migrations, repositories, Drive backup/restore
 ├── notifications/           # Telegram notifier wrapper
-├── tests/                   # pytest suite (no live API or Telegram needed)
+├── api/                     # Read-only FastAPI dashboard backend (endpoints, routers)
+├── dashboard/               # Dashboard app wiring (FastAPI app, deps, config)
+├── schemas/                 # Pydantic schemas for the dashboard API
+├── services/                # Dashboard service layer
+├── webhooks/                # Optional webhook server (WEBHOOK_ENABLED)
+├── replay/ , replay.py      # Replay/stress-testing framework for the DCA engine
+├── scripts/                 # Operational scripts
+├── tests/                   # pytest suite — 700+ tests, no live API or Telegram needed
 └── requirements.txt
 ```
 
@@ -64,56 +71,39 @@ cd grid-trading-bot && python -m pytest tests/ -v
 
 ## Important notes
 
-- **This bot places real orders with real money** once configured with live CoinDCX credentials.
-- There is no paper-trading / simulation mode.
+- **This bot places real orders with real money** once configured with live CoinDCX credentials and a grid is started in `real` mode.
+- A **paper-trading mode** exists (`mode="paper"`) — grids can run against a simulated exchange with no real orders placed; fills are instant at quoted price (no slippage/latency modeling yet — see roadmap).
 - Only Telegram user IDs listed in `TELEGRAM_CHAT_ID` / `TELEGRAM_ALLOWED_USER_IDS` can control the bot.
+- A read-only FastAPI + React dashboard is available for viewing grid/trade state (see `api/`, `dashboard/`, and the separate frontend under `artifacts/grid-dashboard`).
 
 ## Project Roadmap
 
-Consolidated list of 40 planned items, in rough priority order:
+Original list of 40 planned items. Status verified against the codebase on 2026-08-11 —
+35 of 40 are implemented and tested; 5 remain open.
 
-| # | Item | Audit Ref |
-|---|---|---|
-| 1 | Exchange validation audit | H-01, H-02, M-09 |
-| 2 | Shared validation everywhere | M-01, M-02 |
-| 3 | Production hardening | H-03–H-08, M-03–M-08 |
-| 4 | End-to-end verification | — |
-| 5 | Long-duration paper trading | M-10 |
-| 6 | Restart recovery verification | C-05 |
-| 7 | Duplicate order prevention | H-02 |
-| 8 | Dynamic price formatting | — |
-| 9 | Next Buy price display | — |
-| 10 | Next Sell price display | — |
-| 11 | Capital usage display | H-06 |
-| 12 | Real wallet /balance | — |
-| 13 | Better /coininfo | — |
-| 14 | Persistent database across redeploys | — |
-| 15 | Automatic Google Drive backup | C-02 |
-| 16 | Dust position management | H-08 |
-| 17 | Order synchronization with CoinDCX | C-05 |
-| 18 | Better Telegram notifications | M-03, M-04, M-05, M-06 |
-| 19 | Daily P&L summary | — |
-| 20 | CoinDCX webhooks (V2) | L-09 |
-| 21 | Web Dashboard | — |
-| 22 | Dashboard Server/API | — |
-| 23 | Trailing Take-Profit | — |
-| 24 | Manual Buy/Sell commands | L-05 |
-| 25 | Fix Paper/Real routing safety bug | C-01 |
-| 26 | Persist price alerts | C-04 |
-| 27 | API polling optimization & caching | H-01 |
-| 28 | Rate-limit backoff | H-03 |
-| 29 | Transaction-safe grid creation | H-04 |
-| 30 | Database migration/versioning | H-05 |
-| 31 | Risk manager based on total grid exposure | H-06 |
-| 32 | Concurrency protection | H-07 |
-| 33 | Earlier symbol validation in /newgrid | M-01 |
-| 34 | Graceful shutdown | M-08 |
-| 35 | Realistic paper trading (slippage/latency) | M-10 |
-| 36 | Docker & CI/CD | L-01 |
-| 37 | Live CoinDCX integration tests | L-02 |
-| 38 | Telegram command & conversation tests | L-03 |
-| 39 | /adjustgrid command | L-04 |
-| 40 | Performance & security audit before live deployment | — |
+### Remaining (5)
+
+| # | Item | Audit Ref | Notes |
+|---|---|---|---|
+| 5 | Long-duration paper trading | M-10 | Paper mode exists and is tested; an actual multi-day soak run is an operational task, not a code change |
+| 11 | Capital usage display | H-06 | No `/balance` or dashboard view currently shows total capital deployed vs. available across all grids |
+| 35 | Realistic paper trading (slippage/latency) | M-10 | Paper exchange fills instantly at quoted price; no slippage or latency simulation |
+| 37 | Live CoinDCX integration tests | L-02 | Only `test_fetch_coindcx_history.py` touches the real API; no opt-in live-exchange test suite |
+| 40 | Performance & security audit before live deployment | — | No audit artifact in-repo; external/manual activity |
+
+### Done (35)
+
+All other items are implemented and covered by the test suite (707 passing), including:
+shared exchange-rule validation across every order path, production hardening (SQLite busy-timeout,
+graceful shutdown, memory-leak fixes, price sanity checks), restart recovery reconciliation,
+duplicate-order prevention, dynamic per-market price/quantity precision formatting,
+Next Buy/Sell price display, real-wallet `/balance`, `/coininfo`, persistent SQLite DB with
+numbered schema migrations, automatic Google Drive backup, dust-position write-off, CoinDCX
+order sync on restart, richer Telegram notifications, daily P&L summary, webhook server
+(`WEBHOOK_ENABLED`), read-only FastAPI + React dashboard, trailing take-profit, `/manualbuy`
+`/manualsell`, `/adjustgrid`, persisted price alerts, exponential backoff via `tenacity`,
+per-grid `asyncio.Lock` concurrency protection, earlier `/newgrid` symbol validation,
+Docker + GitHub Actions CI, and Telegram command/conversation test coverage.
 
 ## User preferences
 
