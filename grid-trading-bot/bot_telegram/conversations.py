@@ -643,27 +643,30 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
         await query.edit_message_text("⏳ Starting grid… please wait.")
         try:
             grid_id = await app_context.dca_manager.start_grid(context.user_data)
-            if d.get("_source") == "default":
-                # Remember this mode choice so the next Default Grid skips
-                # mode selection entirely, per the spec ("last selected or
-                # ask if not set").
-                try:
-                    await app_context.repos.grid_defaults.update(last_mode=d.get("mode"))
-                except Exception:  # noqa: BLE001
-                    log.warning("Could not persist last_mode after grid start", exc_info=True)
-            await query.edit_message_text(
-                f"✅ <b>DCA Grid Started!</b>\n\n"
-                f"Coin: <b>{symbol}</b>\n"
-                f"Grid ID: <code>{grid_id}</code>\n\n"
-                "Initial buy order placed. The bot will monitor price and execute "
-                "dip buys and profit sells automatically.\n\n"
-                "Use /grids to see status, or /stopgrid to stop.",
-                parse_mode="HTML",
-            )
-        except (ValueError, Exception) as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             log.exception("Error starting DCA grid")
             await query.edit_message_text(f"❌ Could not start grid: {exc}")
+            return ConversationHandler.END
+
+        # Grid created — persist mode choice for Default Grid before replying
+        # (failure here is non-fatal and must not produce a false error message)
+        if d.get("_source") == "default":
+            try:
+                await app_context.repos.grid_defaults.update(last_mode=d.get("mode"))
+            except Exception:  # noqa: BLE001
+                log.warning("Could not persist last_mode after grid start", exc_info=True)
+
+        await query.edit_message_text(
+            f"✅ <b>DCA Grid Started!</b>\n\n"
+            f"Coin: <b>{symbol}</b>\n"
+            f"Grid ID: <code>{grid_id}</code>\n\n"
+            "Initial buy order placed. The bot will monitor price and execute "
+            "dip buys and profit sells automatically.\n\n"
+            "Use /grids to see status, or /stopgrid to stop.",
+            parse_mode="HTML",
+        )
         return ConversationHandler.END
+
 
     # ------------------------------------------------------------------
     # Cancel

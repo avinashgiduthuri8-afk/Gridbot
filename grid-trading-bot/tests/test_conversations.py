@@ -478,3 +478,89 @@ async def test_custom_grid_never_modifies_saved_defaults(app_context, repos):
     assert defaults_after["base_investment"] == 500.0, "Custom Grid must never touch saved defaults"
     assert defaults_after["max_levels"] == 5
     assert defaults_after["last_mode"] is None, "Custom Grid mode choice must not be persisted as the default"
+
+
+# ---------------------------------------------------------------------------
+# Regression: confirm handler — success message outside try/except
+# ---------------------------------------------------------------------------
+
+
+async def test_confirm_telegram_error_after_start_does_not_hide_success(app_context, repos):
+    """Regression guard for the bug where query.edit_message_text (the success
+    message) was *inside* the start_grid try/except.
+
+    If the success Telegram edit raised (e.g. network blip after grid was
+    created), the except branch would fire and the user would see
+    '❌ Could not start grid: <Telegram error>' even though the grid had
+    already been created and the initial order placed.
+
+    The fix moves the success edit *outside* the try block, so only
+    dca_manager.start_grid itself is guarded.  We verify this by:
+    1. Patching query.edit_message_text to raise ONLY on the success call.
+    2. Confirming the grid exists in the DB (start_grid succeeded).
+    3. Confirming no '❌ Could not start grid' message was sent.
+    """
+    handler = conv_mod.build_newgrid_conversation(app_context)
+    ctx = FakeContext()
+
+    # Build the full custom grid up to CONFIRM state
+    await handler.entry_points[0].callback(FakeUpdate(text="/newgrid", user_id=111), ctx)
+    u1 = FakeUpdate(user_id=111)
+    u1.callback_query = FakeCallbackQuery("grid_setup_mode:custom", 111)
+    await _find_callback(handler, conv_mod.GRID_SETUP_MODE)(u1, ctx)
+    u2 = FakeUpdate(user_id=111)
+    u2.callback_query = FakeCallbackQuery("pick_coin:BTCINR", 111)
+    await _find_callback(handler, conv_mod.SELECT_COIN)(u2, ctx)
+    for state, text in [
+        (conv_mod.ENTRY_PRICE, "0"), (conv_mod.BASE_INVESTMENT, "500"),
+        (conv_mod.DIP_BUY_AMOUNT, "100"), (conv_mod.DIP_PERCENTAGE, "5"),
+        (conv_mod.PROFIT_SELL_AMOUNT, "150"), (conv_mod.PROFIT_PERCENTAGE, "7"),
+        (conv_mod.MAX_LEVELS, "10"), (conv_mod.STOP_LOSS, "50"),
+    ]:
+        update = FakeUpdate(text=text, user_id=111)
+        await _find_callback(handler, state)(update, ctx)
+    u_trailing = FakeUpdate(user_id=111)
+    u_trailing.callback_query = FakeCallbackQuery("trailing_choice:no", 111)
+    await _find_callback(handler, conv_mod.TRAILING_CHOICE)(u_trailing, ctx)
+    u3 = FakeUpdate(user_id=111)
+    u3.callback_query = FakeCallbackQuery("pick_mode:paper", 111)
+    await _find_callback(handler, conv_mod.SELECT_MODE)(u3, ctx)
+
+    # Patch edit_message_text to raise only on the final success call
+    # (calls 0-n are "⏳ Validating…" and "⏳ Starting grid…"; success is last)
+    confirm_query = FakeCallbackQuery("confirm_grid:yes", 111)
+    original_edit = confirm_query.edit_message_text
+    call_count = [0]
+
+    async def flaky_edit(text, **kwargs):
+        call_count[0] += 1
+        # First two are "Validating…" and "Starting grid…" — let them pass.
+        # The third (success "✅ DCA Grid Started!") simulates a Telegram error.
+        if call_count[0] >= 3:
+            raise RuntimeError("Simulated Telegram network error")
+        return await original_edit(text, **kwargs)
+
+    confirm_query.edit_message_text = flaky_edit
+
+    confirm_update = FakeUpdate(user_id=111)
+    confirm_update.callback_query = confirm_query
+
+    # Should NOT raise — the Telegram error must propagate past the handler
+    # since the grid was already created (i.e. the error must NOT be caught
+    # and re-reported as "❌ Could not start grid").
+    try:
+        await _find_callback(handler, conv_mod.CONFIRM)(confirm_update, ctx)
+    except RuntimeError:
+        pass  # Expected — the Telegram error propagates, not a false grid error
+
+    # The grid must exist — start_grid succeeded before the Telegram error
+    grids = await repos.grids.list_all()
+    assert len(grids) == 1, "Grid must be created even if the success Telegram message fails"
+    assert grids[0]["symbol"] == "BTCINR"
+
+    # No "❌ Could not start grid" message was ever sent (that would be the bug)
+    all_edits = confirm_query.edited
+    error_edits = [e for e in all_edits if "Could not start grid" in e]
+    assert not error_edits, (
+        f"Bug: a false error message was sent after successful grid creation: {error_edits}"
+    )
