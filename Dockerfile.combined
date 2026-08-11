@@ -1,0 +1,66 @@
+# Combined single-service Dockerfile: ONE Railway service running both
+# the Telegram bot AND the dashboard (API + built frontend) from a single
+# process (main.py). Requires DASHBOARD_EMBEDDED_ENABLED=true (see
+# .env.example) — main.py starts the dashboard's FastAPI app as a
+# background asyncio task on Railway's $PORT alongside Telegram polling.
+#
+# If you'd rather run the bot and dashboard as two separate Railway
+# services instead (e.g. to scale/restart them independently), use
+# grid-trading-bot/Dockerfile (bot only) + Dockerfile.dashboard (dashboard
+# only) instead of this file — see the "Deploying to Railway" section in
+# replit.md for both options.
+#
+# Build context MUST be the repo root (not grid-trading-bot/), because the
+# frontend is a pnpm workspace package that depends on the sibling
+# lib/api-client-react and lib/api-zod packages living outside
+# grid-trading-bot/. On Railway: set this service's Root Directory to the
+# repo root and its Dockerfile Path to Dockerfile.combined.
+#
+# NOTE: pnpm-lock.yaml is currently out of sync with the root package.json
+# (two deps — diff, isomorphic-git — aren't reflected in the lockfile), so
+# the frontend build stage uses --no-frozen-lockfile rather than failing
+# outright. Worth regenerating and committing the lockfile locally to make
+# frontend builds fully reproducible again.
+
+# ---- Stage 1: build the frontend ----
+FROM node:20-slim AS frontend-builder
+
+RUN corepack enable && corepack prepare pnpm@9 --activate
+
+WORKDIR /workspace
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
+COPY lib ./lib
+COPY artifacts/grid-dashboard ./artifacts/grid-dashboard
+
+RUN pnpm install --no-frozen-lockfile
+RUN pnpm --filter @workspace/grid-dashboard run build
+
+# ---- Stage 2: Python bot + embedded dashboard ----
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DASHBOARD_EMBEDDED_ENABLED=true
+
+WORKDIR /app
+
+COPY grid-trading-bot/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY grid-trading-bot/ .
+
+# Frontend build output lands exactly where dashboard/config.py's
+# DASHBOARD_STATIC_DIR default ("dashboard/static") expects it, so
+# main.py's embedded dashboard (see the DASHBOARD_EMBEDDED_ENABLED block)
+# serves it with zero extra config.
+COPY --from=frontend-builder /workspace/artifacts/grid-dashboard/dist ./dashboard/static
+
+RUN mkdir -p data logs \
+    && useradd --create-home --uid 1000 botuser \
+    && chown -R botuser:botuser /app
+USER botuser
+
+# main.py itself binds the dashboard's uvicorn server to $PORT internally
+# (dashboard/config.py already reads it) — the Telegram side makes only
+# outbound connections and needs no port.
+CMD ["python", "main.py"]

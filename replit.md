@@ -78,23 +78,37 @@ cd grid-trading-bot && python -m pytest tests/ -v
 
 ## Deploying to Railway
 
-This repo runs as **two independent Railway services** against the same SQLite volume — the Telegram bot (writes) and the dashboard (read-only). Neither depends on the other being deployed.
+Two ways to run this on Railway — pick one.
 
-### Service 1 — Telegram bot
+### Option A — one service (bot + dashboard together)
 
-- Root Directory: `grid-trading-bot`
-- Dockerfile Path: `Dockerfile` (the existing one)
-- Env vars: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `COINDCX_API_KEY`, `COINDCX_API_SECRET`, plus anything else from `.env.example` you want to override
-- No port needed — this process only makes outbound connections (unless `WEBHOOK_ENABLED=true`, see `.env.example`)
-
-### Service 2 — Dashboard (API + frontend, one process)
+The simplest setup: a single Railway service runs both the Telegram bot and the dashboard (API + built frontend) from one process.
 
 - Root Directory: repo root (**not** `grid-trading-bot` — the frontend build needs the sibling `lib/` workspace packages)
+- Dockerfile Path: `Dockerfile.combined`
+- Env vars: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `COINDCX_API_KEY`, `COINDCX_API_SECRET`, plus anything else from `.env.example` you want to override — `DASHBOARD_EMBEDDED_ENABLED=true` is already baked into `Dockerfile.combined`, no need to set it yourself
+- Railway assigns `$PORT` automatically; `main.py`'s embedded dashboard already reads it (via `dashboard/config.py`), so no port config is required
+- Mount a Railway volume and point `DATABASE_PATH` at it, same as any single-service SQLite deploy
+
+How it works under the hood: `main.py` starts the dashboard's FastAPI app (`dashboard/app.py`) as a background `asyncio` task in the same event loop as Telegram polling — the same pattern already used for the webhook receiver and Drive backup loop. The dashboard opens its own SQLite connection to the same `DATABASE_PATH`; safe alongside the bot's own connection because WAL mode (`storage/database.py`) is built for exactly this — one writer, concurrent readers.
+
+### Option B — two services (bot and dashboard independent)
+
+Use this if you'd rather scale, restart, or redeploy the bot and dashboard independently.
+
+**Service 1 — Telegram bot**
+- Root Directory: `grid-trading-bot`
+- Dockerfile Path: `Dockerfile` (the existing one)
+- Env vars: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `COINDCX_API_KEY`, `COINDCX_API_SECRET`, plus anything else from `.env.example`
+- No port needed — this process only makes outbound connections (unless `WEBHOOK_ENABLED=true`, see `.env.example`)
+
+**Service 2 — Dashboard**
+- Root Directory: repo root
 - Dockerfile Path: `Dockerfile.dashboard`
-- Railway assigns `$PORT` automatically; `dashboard/config.py` already reads it, so no port config is required
-- Both services must point `DATABASE_PATH` at the **same** persistent volume/file for the dashboard to show live data — mount a Railway volume and set `DATABASE_PATH` identically on both services
-- `Dockerfile.dashboard` builds the React frontend (`artifacts/grid-dashboard`) and serves it from the same FastAPI process as the API (`/` and `/assets/*` serve the built app, `/api/*` serves data) — one URL, no separate static host or CORS setup needed for the default case
-- Known gap: `pnpm-lock.yaml` is currently out of sync with the root `package.json` (two deps aren't reflected in the lockfile), so the frontend build stage runs `pnpm install --no-frozen-lockfile` rather than failing. Regenerating and committing the lockfile locally would make this fully reproducible.
+- Railway assigns `$PORT` automatically; no port config required
+- Must point `DATABASE_PATH` at the **same** volume/file as Service 1 for the dashboard to show live data
+
+Both options: known gap — `pnpm-lock.yaml` is currently out of sync with the root `package.json` (two deps aren't reflected in the lockfile), so the frontend build stage runs `pnpm install --no-frozen-lockfile` rather than failing. Regenerating and committing the lockfile locally would make this fully reproducible.
 
 ## Project Roadmap
 

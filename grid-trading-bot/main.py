@@ -10,6 +10,7 @@ Run with: python main.py
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 import sqlite3
 from typing import TYPE_CHECKING
@@ -315,6 +316,35 @@ async def async_main() -> None:
                 settings.webhook.host, settings.webhook.port, settings.webhook.path,
             )
 
+    dashboard_task: asyncio.Task | None = None
+    if os.getenv("DASHBOARD_EMBEDDED_ENABLED", "").strip().lower() in ("1", "true", "yes", "on"):
+        # Runs the dashboard's FastAPI app (api/, dashboard/app.py) as a
+        # background task in this SAME process/event loop, rather than as a
+        # separate Railway service. It opens its own SQLite connection to
+        # the same DATABASE_PATH — safe alongside the bot's own connection
+        # because WAL mode (storage/database.py) is designed exactly for
+        # one writer + concurrent readers. uvicorn/fastapi are already
+        # hard dependencies (requirements.txt), so no optional-import
+        # try/except is needed here, unlike webhook/drive-backup above.
+        import uvicorn
+
+        from dashboard.app import app as dashboard_app
+        from dashboard.config import load_dashboard_settings
+
+        dashboard_settings = load_dashboard_settings()
+        uvicorn_config = uvicorn.Config(
+            dashboard_app,
+            host=dashboard_settings.host,
+            port=dashboard_settings.port,
+            log_level="warning",  # avoid duplicating the bot's own log lines
+        )
+        dashboard_server = uvicorn.Server(uvicorn_config)
+        dashboard_task = asyncio.create_task(dashboard_server.serve())
+        log.info(
+            "Embedded dashboard enabled on %s:%d (static_dir=%s)",
+            dashboard_settings.host, dashboard_settings.port, dashboard_settings.static_dir,
+        )
+
     stop_event = asyncio.Event()
 
     def _handle_signal() -> None:
@@ -353,6 +383,8 @@ async def async_main() -> None:
         background_tasks.append(drive_backup_task)
     if webhook_task is not None:
         background_tasks.append(webhook_task)
+    if dashboard_task is not None:
+        background_tasks.append(dashboard_task)
 
     for task in background_tasks:
         task.cancel()
