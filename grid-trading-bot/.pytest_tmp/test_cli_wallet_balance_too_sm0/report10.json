@@ -24,11 +24,11 @@
     "manual_trades": 0
   },
   "system": {
-    "peak_rss_mb": 89.78125,
-    "cpu_percent": 111.1,
+    "peak_rss_mb": 89.91796875,
+    "cpu_percent": 100.0,
     "exception_count": 0,
     "db_size_bytes": 292336,
-    "replay_duration_seconds": 0.8440000000000509
+    "replay_duration_seconds": 0.9840000000003783
   },
   "validation": {
     "all_passed": true,

@@ -19,6 +19,7 @@ import warnings
 from telegram import Update
 from telegram.ext import (
     CallbackQueryHandler,
+    CommandHandler,
     ContextTypes,
     ConversationHandler,
     MessageHandler,
@@ -693,7 +694,7 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             category=UserWarning,
         )
         return ConversationHandler(
-            entry_points=[MessageHandler(filters.Regex(r"^/newgrid$"), start)],
+            entry_points=[CommandHandler("newgrid", start)],
             states={
                 GRID_SETUP_MODE: [CallbackQueryHandler(grid_setup_mode_chosen, pattern="^grid_setup_mode:")],
                 DEFAULT_COIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, default_coin_entered)],
