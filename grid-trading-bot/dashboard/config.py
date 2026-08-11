@@ -24,14 +24,28 @@ class DashboardSettings:
     host: str
     port: int
     cors_origins: list[str]
+    static_dir: str | None
 
 
 def load_dashboard_settings() -> DashboardSettings:
     cors_raw = os.getenv("DASHBOARD_CORS_ORIGINS", "").strip()
     cors_origins = [o.strip() for o in cors_raw.split(",") if o.strip()] if cors_raw else ["*"]
+
+    # Railway (and most PaaS providers) assign a port at deploy time via the
+    # $PORT env var and expect the app to bind to it — DASHBOARD_PORT stays
+    # as an explicit override for local/self-hosted runs, but $PORT wins
+    # when present so a bare `railway up` works with no extra config.
+    port_raw = os.getenv("DASHBOARD_PORT", "").strip() or os.getenv("PORT", "").strip() or "8000"
+
+    # If a built frontend (`vite build` output) is present at this path, the
+    # app serves it directly — see app.py. Unset/blank or a missing
+    # directory disables this entirely (pure API mode, current default).
+    static_dir = os.getenv("DASHBOARD_STATIC_DIR", "dashboard/static").strip() or None
+
     return DashboardSettings(
         database_path=os.getenv("DATABASE_PATH", "data/grid_bot.db").strip(),
         host=os.getenv("DASHBOARD_HOST", "0.0.0.0").strip(),
-        port=int(os.getenv("DASHBOARD_PORT", "8000").strip()),
+        port=int(port_raw),
         cors_origins=cors_origins,
+        static_dir=static_dir,
     )
