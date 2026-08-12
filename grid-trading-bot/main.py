@@ -141,6 +141,21 @@ async def run_drive_backup_loop(
             await notifier.drive_backup_failed(str(exc))
 
 
+async def _start_monitors_after_recovery(
+    recovery_manager: RecoveryManager,
+    order_monitor: OrderMonitor,
+    price_monitor: PriceMonitor,
+) -> None:
+    """Run recovery first, then start the live polling loops.
+
+    Kept as a tiny helper so startup ordering can be regression-tested without
+    having to spin up the entire Telegram application in tests.
+    """
+    await recovery_manager.recover()
+    order_monitor.start()
+    price_monitor.start()
+
+
 async def async_main() -> None:
     try:
         settings = load_settings()
@@ -244,10 +259,7 @@ async def async_main() -> None:
     )
     application = build_application(app_context)
 
-    await recovery_manager.recover()
-
-    order_monitor.start()
-    price_monitor.start()
+    await _start_monitors_after_recovery(recovery_manager, order_monitor, price_monitor)
 
     daily_summary_task = asyncio.create_task(
         run_daily_summary_loop(notifier, repos, settings.daily_summary_interval_seconds)

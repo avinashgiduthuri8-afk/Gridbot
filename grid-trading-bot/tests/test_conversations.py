@@ -99,6 +99,58 @@ async def test_newgrid_shows_default_custom_menu(app_context):
     assert "Custom Grid" in update.message.replies[-1]
 
 
+async def test_newgrid_is_reentrant_and_clears_stale_state(app_context):
+    handler = conv_mod.build_newgrid_conversation(app_context)
+    assert handler.allow_reentry is True
+    assert handler.conversation_timeout == conv_mod.NEWGRID_CONVERSATION_TIMEOUT_SECONDS
+
+    ctx = FakeContext()
+    ctx.user_data.update({"symbol": "ETHINR", "entry_price": 12345})
+    update = FakeUpdate(text="/newgrid", user_id=111)
+
+    next_state = await handler.entry_points[0].callback(update, ctx)
+
+    assert next_state == conv_mod.GRID_SETUP_MODE
+    assert ctx.user_data == {}
+    assert "Create New Grid" in update.message.replies[-1]
+
+
+async def test_newgrid_timeout_clears_state_and_ends_conversation(app_context):
+    handler = conv_mod.build_newgrid_conversation(app_context)
+    timeout_cb = handler.states[ConversationHandler.TIMEOUT][0].callback
+
+    ctx = FakeContext()
+    ctx.user_data.update({"symbol": "BTCINR", "entry_price": 54000.0})
+    update = FakeUpdate(text="BTCINR", user_id=111)
+
+    next_state = await timeout_cb(update, ctx)
+
+    assert next_state == ConversationHandler.END
+    assert ctx.user_data == {}
+    assert "timed out" in update.message.replies[-1].lower()
+
+
+async def test_newgrid_command_fallback_aborts_abandoned_flow(app_context):
+    handler = conv_mod.build_newgrid_conversation(app_context)
+    fallback_cb = None
+    for fallback in handler.fallbacks:
+        cb = getattr(fallback, "callback", None)
+        if cb is not None:
+            fallback_cb = cb
+            break
+    assert fallback_cb is not None
+
+    ctx = FakeContext()
+    ctx.user_data.update({"symbol": "BTCINR", "entry_price": 54000.0})
+    update = FakeUpdate(text="/help", user_id=111)
+
+    next_state = await fallback_cb(update, ctx)
+
+    assert next_state == ConversationHandler.END
+    assert ctx.user_data == {}
+    assert "cancelled" in update.message.replies[-1].lower()
+
+
 async def test_newgrid_rejects_unauthorized_user(app_context):
     handler = conv_mod.build_newgrid_conversation(app_context)
     entry_fn = handler.entry_points[0].callback

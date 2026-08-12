@@ -124,6 +124,7 @@ class RecoveryManager:
                     exchange_order_id=match.exchange_order_id,
                     filled_quantity=match.filled_quantity,
                     filled_price=match.filled_price,
+                    fee=match.fee,
                     reconciliation_status="resolved",
                 )
                 log.info(

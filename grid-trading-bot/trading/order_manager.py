@@ -147,15 +147,34 @@ class OrderManager:
             raise
 
         fee = await self._resolve_fee(symbol, ex_order.exchange_order_id, ex_order.fee)
-        await self._repos.orders.update_status(
-            order_id,
-            ex_order.status,
-            exchange_order_id=ex_order.exchange_order_id,
-            filled_quantity=ex_order.filled_quantity,
-            filled_price=ex_order.filled_price,
-            fee=fee,
-            reconciliation_status="resolved",
-        )
+        try:
+            await self._repos.orders.update_status(
+                order_id,
+                ex_order.status,
+                exchange_order_id=ex_order.exchange_order_id,
+                filled_quantity=ex_order.filled_quantity,
+                filled_price=ex_order.filled_price,
+                fee=fee,
+                reconciliation_status="resolved",
+            )
+        except Exception as exc:  # noqa: BLE001
+            # The exchange already accepted the order. If the local persistence
+            # step fails now, we must not lose the submission by rolling back the
+            # grid. Leave the pre-existing PENDING/SUBMITTED row in place so
+            # recovery can reconcile it later by client_order_id.
+            log.error(
+                "order.persist_failed order=%s grid=%s symbol=%s side=%s "
+                "exchange_id=%s detail=%s",
+                order_id, grid_id, symbol, side, ex_order.exchange_order_id, exc,
+                exc_info=True,
+            )
+            record.exchange_order_id = ex_order.exchange_order_id
+            record.status = ex_order.status
+            record.filled_quantity = ex_order.filled_quantity
+            record.filled_price = ex_order.filled_price
+            record.fee = fee
+            record.reconciliation_status = "resolved"
+            return record
 
         log.info(
             "order.%-12s order=%s grid=%s symbol=%s side=%s "
@@ -202,15 +221,23 @@ class OrderManager:
             )
             return False
         if match is not None:
-            await self._repos.orders.update_status(
-                order_id,
-                match.status,
-                exchange_order_id=match.exchange_order_id,
-                filled_quantity=match.filled_quantity,
-                filled_price=match.filled_price,
-                fee=match.fee,
-                reconciliation_status="resolved",
-            )
+            try:
+                await self._repos.orders.update_status(
+                    order_id,
+                    match.status,
+                    exchange_order_id=match.exchange_order_id,
+                    filled_quantity=match.filled_quantity,
+                    filled_price=match.filled_price,
+                    fee=match.fee,
+                    reconciliation_status="resolved",
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.error(
+                    "resolve_uncertain_submitted: persistence failed for %s "
+                    "after exchange match %s: %s",
+                    order_id, match.exchange_order_id, exc,
+                    exc_info=True,
+                )
             log.info(
                 "resolve_uncertain_submitted: linked %s → exchange %s (status=%s)",
                 order_id, match.exchange_order_id, match.status,
@@ -264,13 +291,40 @@ class OrderManager:
 
         if new_status != old_status or ex_order.filled_quantity != order["filled_quantity"]:
             fee = await self._resolve_fee(order["symbol"], order["exchange_order_id"], ex_order.fee)
-            await self._repos.orders.update_status(
-                order_id,
-                new_status,
-                filled_quantity=ex_order.filled_quantity,
-                filled_price=ex_order.filled_price,
-                fee=fee,
-            )
+            try:
+                await self._repos.orders.update_status(
+                    order_id,
+                    new_status,
+                    filled_quantity=ex_order.filled_quantity,
+                    filled_price=ex_order.filled_price,
+                    fee=fee,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.error(
+                    "order.persist_failed during sync order=%s grid=%s symbol=%s side=%s "
+                    "exchange_id=%s detail=%s",
+                    order_id, order["grid_id"], order["symbol"], order["side"],
+                    order["exchange_order_id"], exc, exc_info=True,
+                )
+                return OrderRecord(
+                    order_id=order["order_id"],
+                    grid_id=order["grid_id"],
+                    exchange_order_id=order["exchange_order_id"],
+                    symbol=order["symbol"],
+                    side=order["side"],
+                    order_type=order["order_type"],
+                    price=order["price"],
+                    quantity=order["quantity"],
+                    filled_quantity=ex_order.filled_quantity,
+                    filled_price=ex_order.filled_price,
+                    status=new_status,
+                    created_at=order["created_at"],
+                    updated_at=order["updated_at"],
+                    client_order_id=order.get("client_order_id"),
+                    fee=fee,
+                    reconciliation_status=order.get("reconciliation_status", "not_needed"),
+                    reconciliation_retry_count=order.get("reconciliation_retry_count", 0),
+                )
             if new_status != old_status:
                 log.info(
                     "order.%-12s order=%s grid=%s symbol=%s side=%s "

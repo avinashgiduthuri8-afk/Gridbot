@@ -6,6 +6,7 @@ import pytest
 
 from config.constants import GridStatus, OrderStatus
 from config.settings import RiskSettings
+from exchange.exceptions import ExchangeTimeoutError
 from risk.risk_manager import RiskManager
 from storage.models import DCAGridRecord, OrderRecord
 from trading.dca_manager import DCAManager
@@ -174,6 +175,55 @@ async def test_start_grid_exchange_failure_rolls_back_grid(
         await dca_manager.start_grid(_default_params())
     all_grids = await repos.grids.list_all()
     assert len(all_grids) == 0, "Grid row should be deleted after a failed start"
+
+
+@pytest.mark.anyio
+async def test_start_grid_timeout_preserves_grid_and_uncertain_order(
+    dca_manager, repos, mock_exchange
+):
+    mock_exchange.place_exception = ExchangeTimeoutError("timed out after acceptance")
+
+    with pytest.raises(ExchangeTimeoutError):
+        await dca_manager.start_grid(_default_params())
+
+    grids = await repos.grids.list_all()
+    assert len(grids) == 1
+    assert grids[0]["status"] == GridStatus.ACTIVE.value
+
+    orders = await repos.orders.list_all()
+    assert len(orders) == 1
+    assert orders[0]["status"] == OrderStatus.UNKNOWN.value
+    assert orders[0]["client_order_id"] == orders[0]["order_id"]
+
+
+@pytest.mark.anyio
+async def test_start_grid_db_persistence_failure_keeps_exchange_submission_tracked(
+    dca_manager, repos, mock_exchange
+):
+    original_update_status = repos.orders.update_status
+    call_count = 0
+
+    async def flaky_update_status(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise RuntimeError("simulated DB failure after exchange acceptance")
+        return await original_update_status(*args, **kwargs)
+
+    repos.orders.update_status = flaky_update_status  # type: ignore[method-assign]
+
+    grid_id = await dca_manager.start_grid(_default_params())
+
+    grids = await repos.grids.list_all()
+    assert len(grids) == 1
+    assert grids[0]["grid_id"] == grid_id
+
+    orders = await repos.orders.list_all()
+    assert len(orders) == 1
+    assert orders[0]["grid_id"] == grid_id
+    assert orders[0]["client_order_id"] == orders[0]["order_id"]
+    assert orders[0]["status"] == OrderStatus.SUBMITTED.value
+    assert orders[0]["exchange_order_id"] is None
 
 
 # ---------------------------------------------------------------------------

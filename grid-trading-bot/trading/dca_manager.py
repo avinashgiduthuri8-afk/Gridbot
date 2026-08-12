@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 from config.constants import GridStatus, OrderStatus
 from exchange.base import ExchangeClient
-from exchange.exceptions import ExchangeError
+from exchange.exceptions import ExchangeConnectionError, ExchangeError, ExchangeTimeoutError
 from grid.dca_engine import (
     calculate_next_buy_price,
     calculate_profit_target,
@@ -281,6 +281,14 @@ class DCAManager:
                 mode=mode,
             )
         except Exception as exc:
+            if isinstance(exc, (ExchangeTimeoutError, ExchangeConnectionError)):
+                log.error(
+                    "Initial order submission for grid %s is uncertain; preserving "
+                    "grid and order rows for recovery: %s",
+                    grid_id, exc,
+                )
+                raise
+
             # Roll back the grid row entirely — a zombie ACTIVE/STOPPED record with
             # no orders is more confusing than a clean failure the user can retry.
             try:

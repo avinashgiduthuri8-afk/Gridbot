@@ -63,6 +63,8 @@ log = get_logger("telegram")
     CONFIRM,
 ) = range(16)
 
+NEWGRID_CONVERSATION_TIMEOUT_SECONDS = 15 * 60
+
 
 def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHandler:  # noqa: F821
 
@@ -91,6 +93,16 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
             reply_markup=grid_mode_choice_keyboard(),
         )
         return GRID_SETUP_MODE
+
+    async def timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        context.user_data.clear()
+        message = getattr(update, "message", None)
+        if message is not None:
+            await message.reply_text(
+                "⏰ /newgrid timed out because the setup was left idle.\n\n"
+                "Use /newgrid to start a fresh grid."
+            )
+        return ConversationHandler.END
 
     async def grid_setup_mode_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         query = update.callback_query
@@ -577,7 +589,7 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
         await query.edit_message_text("⏳ Validating pair and investment rules…")
 
         from trading.coin_validator import CoinValidator
-        from exchange.exceptions import ExchangeError
+        from exchange.exceptions import ExchangeConnectionError, ExchangeError, ExchangeTimeoutError
 
         validator = CoinValidator(app_context.exchange)
 
@@ -644,6 +656,18 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
         await query.edit_message_text("⏳ Starting grid… please wait.")
         try:
             grid_id = await app_context.dca_manager.start_grid(context.user_data)
+        except (ExchangeTimeoutError, ExchangeConnectionError) as exc:
+            log.warning("Uncertain grid submission for %s: %s", symbol, exc)
+            await query.edit_message_text(
+                "⚠️ <b>Grid submission is uncertain.</b>\n\n"
+                "The exchange may have accepted the order, but the final response "
+                "was lost.\n"
+                "The bot kept the local grid/order record for recovery.\n\n"
+                "Do not start another grid for the same symbol yet; check /grids "
+                "or wait for recovery to reconcile it.",
+                parse_mode="HTML",
+            )
+            return ConversationHandler.END
         except Exception as exc:  # noqa: BLE001
             log.exception("Error starting DCA grid")
             await query.edit_message_text(f"❌ Could not start grid: {exc}")
@@ -674,7 +698,19 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
     # ------------------------------------------------------------------
 
     async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        await update.message.reply_text("❌ Grid setup cancelled.")
+        context.user_data.clear()
+        message = getattr(update, "message", None)
+        if message is not None:
+            await message.reply_text("❌ Grid setup cancelled.")
+        return ConversationHandler.END
+
+    async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        context.user_data.clear()
+        message = getattr(update, "message", None)
+        if message is not None:
+            await message.reply_text(
+                "❌ That setup was cancelled.\n\nUse /newgrid to start again."
+            )
         return ConversationHandler.END
 
     # ------------------------------------------------------------------
@@ -695,6 +731,8 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
         )
         return ConversationHandler(
             entry_points=[CommandHandler("newgrid", start)],
+            allow_reentry=True,
+            conversation_timeout=NEWGRID_CONVERSATION_TIMEOUT_SECONDS,
             states={
                 GRID_SETUP_MODE: [CallbackQueryHandler(grid_setup_mode_chosen, pattern="^grid_setup_mode:")],
                 DEFAULT_COIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, default_coin_entered)],
@@ -712,8 +750,12 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
                 TRAILING_PERCENTAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, trailing_percentage_entered)],
                 SELECT_MODE: [CallbackQueryHandler(mode_selected, pattern="^pick_mode:")],
                 CONFIRM: [CallbackQueryHandler(confirm, pattern="^confirm_grid:")],
+                ConversationHandler.TIMEOUT: [MessageHandler(filters.ALL, timeout)],
             },
-            fallbacks=[MessageHandler(filters.Regex(r"^/cancel$"), cancel)],
+            fallbacks=[
+                MessageHandler(filters.Regex(r"^/cancel$"), cancel),
+                MessageHandler(filters.COMMAND, cancel_command),
+            ],
             name="newgrid_conversation",
             persistent=False,
         )
