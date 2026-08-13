@@ -8,13 +8,16 @@ reads via the same Repositories class those tests already exercise.
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
 
 from config.constants import GridStatus
 from dashboard.app import create_app
+from storage.database import Database
 from storage.models import DCAGridRecord, OrderRecord, TradeHistoryRecord
+from storage.repositories import Repositories
 from utils.helpers import new_id, now_iso
 
 
@@ -36,10 +39,17 @@ def dashboard_client(tmp_path, monkeypatch):
     (that hangs under this project's WAL PRAGMA, per this session's own
     prior discovery) and never the real data/grid_bot.db."""
     db_path = str(tmp_path / "dashboard_test.db")
+    # The bot owns creation/migration. Prepare that database with a regular
+    # writer before the dashboard starts, then keep the dashboard itself
+    # connected through its read-only Database instance.
+    writer_db = Database(db_path)
+    _seed(writer_db.connect(), writer_db.migrate())
     monkeypatch.setenv("DATABASE_PATH", db_path)
     app = create_app()
     with TestClient(app) as client:
+        app.state.seed_repos = Repositories(writer_db)
         yield client
+    _seed(writer_db.close())
 
 
 def _make_grid(**overrides) -> DCAGridRecord:
@@ -92,6 +102,13 @@ def test_health_returns_ok_and_connected(dashboard_client):
     assert data["database_connected"] is True
 
 
+def test_dashboard_database_connection_is_read_only(dashboard_client):
+    dashboard_db = dashboard_client.app.state.db
+    assert dashboard_db._read_only is True
+    with pytest.raises(sqlite3.OperationalError, match="readonly"):
+        _seed(dashboard_db.connection.execute("CREATE TABLE dashboard_write_probe (id INTEGER)"))
+
+
 # ---------------------------------------------------------------------------
 # /grids
 # ---------------------------------------------------------------------------
@@ -104,7 +121,7 @@ def test_list_grids_empty_database(dashboard_client):
 
 
 def test_list_grids_returns_seeded_grid(dashboard_client):
-    repos = dashboard_client.app.state.repos
+    repos = dashboard_client.app.state.seed_repos
     grid = _make_grid()
     _seed(repos.grids.create(grid))
 
@@ -117,7 +134,7 @@ def test_list_grids_returns_seeded_grid(dashboard_client):
 
 
 def test_get_grid_by_id_success(dashboard_client):
-    repos = dashboard_client.app.state.repos
+    repos = dashboard_client.app.state.seed_repos
     grid = _make_grid()
     _seed(repos.grids.create(grid))
 
@@ -144,7 +161,7 @@ def test_positions_empty_database(dashboard_client):
 
 
 def test_positions_excludes_completed_and_stopped_grids(dashboard_client):
-    repos = dashboard_client.app.state.repos
+    repos = dashboard_client.app.state.seed_repos
     active = _make_grid(symbol="BTCINR")
     completed = _make_grid(symbol="ETHINR", status=GridStatus.COMPLETED.value, total_quantity=0.0)
     _seed(repos.grids.create(active), repos.grids.create(completed))
@@ -156,7 +173,7 @@ def test_positions_excludes_completed_and_stopped_grids(dashboard_client):
 
 
 def test_positions_without_price_gives_zero_unrealized(dashboard_client):
-    repos = dashboard_client.app.state.repos
+    repos = dashboard_client.app.state.seed_repos
     grid = _make_grid()
     _seed(repos.grids.create(grid))
 
@@ -167,7 +184,7 @@ def test_positions_without_price_gives_zero_unrealized(dashboard_client):
 
 
 def test_positions_with_price_override_computes_unrealized(dashboard_client):
-    repos = dashboard_client.app.state.repos
+    repos = dashboard_client.app.state.seed_repos
     grid = _make_grid(average_entry_price=5_000_000.0, total_quantity=0.01)
     _seed(repos.grids.create(grid))
 
@@ -178,7 +195,7 @@ def test_positions_with_price_override_computes_unrealized(dashboard_client):
 
 
 def test_positions_malformed_price_override_ignored_gracefully(dashboard_client):
-    repos = dashboard_client.app.state.repos
+    repos = dashboard_client.app.state.seed_repos
     grid = _make_grid()
     _seed(repos.grids.create(grid))
 
@@ -200,7 +217,7 @@ def test_orders_empty_database(dashboard_client):
 
 
 def test_orders_returns_seeded_order(dashboard_client):
-    repos = dashboard_client.app.state.repos
+    repos = dashboard_client.app.state.seed_repos
     grid = _make_grid()
     order = _make_order(grid.grid_id)
     _seed(repos.grids.create(grid), repos.orders.create(order))
@@ -212,7 +229,7 @@ def test_orders_returns_seeded_order(dashboard_client):
 
 
 def test_orders_filtered_by_grid_id(dashboard_client):
-    repos = dashboard_client.app.state.repos
+    repos = dashboard_client.app.state.seed_repos
     grid1, grid2 = _make_grid(), _make_grid(symbol="ETHINR")
     order1 = _make_order(grid1.grid_id)
     order2 = _make_order(grid2.grid_id)
@@ -242,7 +259,7 @@ def test_trade_history_empty_database(dashboard_client):
 
 
 def test_trade_history_returns_seeded_trade(dashboard_client):
-    repos = dashboard_client.app.state.repos
+    repos = dashboard_client.app.state.seed_repos
     grid = _make_grid()
     trade = _make_trade(grid.grid_id)
     _seed(repos.grids.create(grid), repos.trade_history.record(trade))
@@ -268,7 +285,7 @@ def test_portfolio_empty_database(dashboard_client):
 
 
 def test_portfolio_aggregates_grid_counts_by_status(dashboard_client):
-    repos = dashboard_client.app.state.repos
+    repos = dashboard_client.app.state.seed_repos
     _seed(
         repos.grids.create(_make_grid(status=GridStatus.ACTIVE.value)),
         repos.grids.create(_make_grid(symbol="ETHINR", status=GridStatus.PAUSED.value)),
@@ -286,7 +303,7 @@ def test_portfolio_aggregates_grid_counts_by_status(dashboard_client):
 
 
 def test_portfolio_with_price_override(dashboard_client):
-    repos = dashboard_client.app.state.repos
+    repos = dashboard_client.app.state.seed_repos
     grid = _make_grid(average_entry_price=5_000_000.0, total_quantity=0.01, total_investment=50_000.0)
     _seed(repos.grids.create(grid))
 
@@ -311,7 +328,7 @@ def test_analytics_empty_database(dashboard_client):
 
 
 def test_analytics_counts_buys_and_sells(dashboard_client):
-    repos = dashboard_client.app.state.repos
+    repos = dashboard_client.app.state.seed_repos
     grid = _make_grid()
     _seed(
         repos.grids.create(grid),

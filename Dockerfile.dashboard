@@ -26,7 +26,7 @@ COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 COPY lib ./lib
 COPY artifacts/grid-dashboard ./artifacts/grid-dashboard
 
-RUN pnpm install --no-frozen-lockfile
+RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @workspace/grid-dashboard run build
 
 # ---- Stage 2: Python backend serving the built frontend ----

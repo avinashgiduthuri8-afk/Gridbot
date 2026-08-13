@@ -35,7 +35,7 @@ def load_dashboard_settings() -> DashboardSettings:
     # $PORT env var and expect the app to bind to it — DASHBOARD_PORT stays
     # as an explicit override for local/self-hosted runs, but $PORT wins
     # when present so a bare `railway up` works with no extra config.
-    port_raw = os.getenv("DASHBOARD_PORT", "").strip() or os.getenv("PORT", "").strip() or "8000"
+    port_raw = os.getenv("PORT", "").strip() or os.getenv("DASHBOARD_PORT", "").strip() or "8000"
 
     # If a built frontend (`vite build` output) is present at this path, the
     # app serves it directly — see app.py. Unset/blank or a missing

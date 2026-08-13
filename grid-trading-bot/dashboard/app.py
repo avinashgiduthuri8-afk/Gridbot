@@ -35,7 +35,9 @@ async def lifespan(app: FastAPI):
     setup_logging()
     dashboard_settings = load_dashboard_settings()
 
-    db = Database(dashboard_settings.database_path)
+    # The bot owns schema migration. The dashboard only opens its existing
+    # database in SQLite's read-only mode and cannot create or alter it.
+    db = Database(dashboard_settings.database_path, read_only=True)
     await db.connect()
     await db.migrate()  # idempotent — safe whether or not the bot process already ran this
 
@@ -48,7 +50,7 @@ async def lifespan(app: FastAPI):
     # limits and poll intervals but never a secret (see schemas/settings.py).
     app.state.settings = load_settings()
 
-    log.info("Dashboard started against database %s", dashboard_settings.database_path)
+    log.info("Dashboard started read-only against database %s", dashboard_settings.database_path)
     try:
         yield
     finally:

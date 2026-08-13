@@ -221,8 +221,9 @@ _MIGRATIONS: list[tuple[int, str, Callable[[aiosqlite.Connection], Awaitable[Non
 class Database:
     """Thin async wrapper around a single shared aiosqlite connection."""
 
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, *, read_only: bool = False) -> None:
         self._db_path = db_path
+        self._read_only = read_only
         self._conn: aiosqlite.Connection | None = None
 
     @property
@@ -232,6 +233,24 @@ class Database:
         return self._conn
 
     async def connect(self) -> None:
+        if self._read_only:
+            resolved_path = Path(self._db_path).resolve()
+            if not resolved_path.is_file():
+                raise FileNotFoundError(
+                    f"Read-only database does not exist: {resolved_path}. "
+                    "Set DATABASE_PATH to the trading bot's migrated SQLite database."
+                )
+
+            # mode=ro prevents file creation and writes. query_only is a
+            # second connection-level guard against accidental mutating SQL.
+            self._conn = await aiosqlite.connect(f"{resolved_path.as_uri()}?mode=ro", uri=True)
+            self._conn.row_factory = aiosqlite.Row
+            await self._conn.execute("PRAGMA query_only=ON;")
+            await self._conn.execute("PRAGMA foreign_keys=ON;")
+            await self._conn.execute("PRAGMA busy_timeout=5000;")
+            log.info("Connected read-only to SQLite database at %s", resolved_path)
+            return
+
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         resolved_path = Path(self._db_path).resolve()
         existed_before = resolved_path.exists()
@@ -259,6 +278,11 @@ class Database:
 
     async def migrate(self) -> None:
         assert self._conn is not None
+        if self._read_only:
+            # A dashboard connection is intentionally never allowed to own
+            # schema creation or migration. Its bot-owned database must be
+            # migrated before the dashboard starts.
+            return
         await self._conn.executescript(SCHEMA)
         await self._conn.commit()
 

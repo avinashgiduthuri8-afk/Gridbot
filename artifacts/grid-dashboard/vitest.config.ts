@@ -10,6 +10,9 @@ export default defineConfig({
     },
   },
   test: {
+    // Keep discovery within the dashboard package. Without this, Vitest
+    // walks the bot's Python cache directories when run from the workspace.
+    dir: path.resolve(import.meta.dirname, "src"),
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     globals: true,
