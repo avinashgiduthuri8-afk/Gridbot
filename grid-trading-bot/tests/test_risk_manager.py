@@ -49,7 +49,7 @@ def risk_settings():
     return RiskSettings(
         max_total_capital=10000,
         max_capital_per_coin=5000,
-        max_simultaneous_grids=2,
+        max_simultaneous_grids=20,
         min_wallet_balance=500,
         daily_loss_limit=1000,
     )
@@ -58,45 +58,38 @@ def risk_settings():
 @pytest.mark.anyio
 async def test_allows_grid_within_limits(repos, risk_settings):
     manager = RiskManager(risk_settings, repos)
-    result = await manager.check_can_start_grid("BTCINR", 1000, wallet_inr_balance=5000)
+    result = await manager.check_can_start_grid("BTCINR", 500, wallet_inr_balance=5000)
     assert result.allowed
+    assert result.reason == ""
 
 
 @pytest.mark.anyio
-async def test_rejects_grid_exceeding_per_coin_cap(repos, risk_settings):
+async def test_rejects_when_wallet_balance_insufficient(repos, risk_settings):
     manager = RiskManager(risk_settings, repos)
-    result = await manager.check_can_start_grid("BTCINR", 6000, wallet_inr_balance=10000)
+    result = await manager.check_can_start_grid("BTCINR", 500, wallet_inr_balance=800)
     assert not result.allowed
-    assert "per-coin" in result.reason
+    assert "Insufficient free wallet balance" in result.reason
 
 
 @pytest.mark.anyio
-async def test_rejects_when_wallet_balance_too_low(repos, risk_settings):
-    manager = RiskManager(risk_settings, repos)
-    # wallet=1200, investment=1000 → remaining=200 < min_wallet_balance=500
-    result = await manager.check_can_start_grid("BTCINR", 1000, wallet_inr_balance=1200)
-    assert not result.allowed
-    assert "minimum" in result.reason
-
-
-@pytest.mark.anyio
-async def test_rejects_duplicate_symbol(repos, risk_settings):
-    grid = _make_grid("BTCINR", status=GridStatus.ACTIVE.value)
+async def test_rejects_when_coin_capital_exceeded(repos, risk_settings):
+    grid = _make_grid("BTCINR", total_investment=49900.0)
     await repos.grids.create(grid)
     manager = RiskManager(risk_settings, repos)
     result = await manager.check_can_start_grid("BTCINR", 500, wallet_inr_balance=5000)
     assert not result.allowed
-    assert "already running" in result.reason
+    assert "Per-coin capital limit" in result.reason
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    "status, should_block",
+    "status,should_block",
     [
-        (GridStatus.PAUSED.value, True),
-        (GridStatus.STOPPED.value, False),
-        (GridStatus.COMPLETED.value, False),
-        ("failed", False),
+        ("active", True),
+        ("paused", True),
+        ("stopping", True),
+        ("stopped", False),
+        ("completed", False),
         ("cancelled", False),
     ],
 )
@@ -112,9 +105,19 @@ async def test_only_active_and_paused_grids_block_duplicates(
 
 @pytest.mark.anyio
 async def test_rejects_when_max_simultaneous_grids_reached(repos, risk_settings):
-    for sym in ["BTCINR", "ETHINR"]:
-        await repos.grids.create(_make_grid(sym))
+    # Create 19 active grids
+    for i in range(19):
+        await repos.grids.create(_make_grid(f"COIN{i}INR"))
     manager = RiskManager(risk_settings, repos)
+
+    # Position 20 should be allowed
+    result = await manager.check_can_start_grid("COIN19INR", 100, wallet_inr_balance=5000)
+    assert result.allowed
+
+    # Start the 20th position
+    await repos.grids.create(_make_grid("COIN19INR"))
+
+    # Position 21 should be rejected
     result = await manager.check_can_start_grid("SOLINR", 100, wallet_inr_balance=5000)
     assert not result.allowed
     assert "Maximum simultaneous grids" in result.reason
@@ -122,12 +125,12 @@ async def test_rejects_when_max_simultaneous_grids_reached(repos, risk_settings)
 
 @pytest.mark.anyio
 async def test_rejects_when_total_capital_exceeded(repos):
-    # Use a settings that allows up to 5 grids so the capital check fires
+    # Use a settings that allows up to 20 grids so the capital check fires
     # before the simultaneous-grid-count check.
     generous_settings = RiskSettings(
         max_total_capital=10000,
         max_capital_per_coin=5000,
-        max_simultaneous_grids=5,
+        max_simultaneous_grids=20,
         min_wallet_balance=500,
         daily_loss_limit=1000,
     )

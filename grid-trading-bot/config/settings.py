@@ -179,13 +179,13 @@ def load_settings() -> Settings:
     risk = RiskSettings(
         max_total_capital=_get_float("MAX_TOTAL_CAPITAL", 50000),
         max_capital_per_coin=_get_float("MAX_CAPITAL_PER_COIN", 20000),
-        max_simultaneous_grids=_get_int("MAX_SIMULTANEOUS_GRIDS", 5),
+        max_simultaneous_grids=_get_int("MAX_SIMULTANEOUS_GRIDS", 20),
         min_wallet_balance=_get_float("MIN_WALLET_BALANCE", 500),
         daily_loss_limit=_get_float("DAILY_LOSS_LIMIT", 2000),
     )
     _validate_range("MAX_TOTAL_CAPITAL", risk.max_total_capital, minimum=0)
     _validate_range("MAX_CAPITAL_PER_COIN", risk.max_capital_per_coin, minimum=0)
-    _validate_range("MAX_SIMULTANEOUS_GRIDS", risk.max_simultaneous_grids, minimum=1)
+    _validate_range("MAX_SIMULTANEOUS_GRIDS", risk.max_simultaneous_grids, minimum=1, maximum=20)
     _validate_range("MIN_WALLET_BALANCE", risk.min_wallet_balance, minimum=0)
     _validate_range("DAILY_LOSS_LIMIT", risk.daily_loss_limit, minimum=0)
 
