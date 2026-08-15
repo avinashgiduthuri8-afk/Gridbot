@@ -109,6 +109,29 @@ def test_dashboard_database_connection_is_read_only(dashboard_client):
         _seed(dashboard_db.connection.execute("CREATE TABLE dashboard_write_probe (id INTEGER)"))
 
 
+def test_dashboard_startup_does_not_migrate_database(tmp_path, monkeypatch):
+    """
+    Ensures that starting the dashboard against an empty/unmigrated database
+    does not create any tables, and leaves the schema entirely empty.
+    """
+    db_path = str(tmp_path / "dashboard_unmigrated.db")
+    monkeypatch.setenv("DATABASE_PATH", db_path)
+
+    app = create_app()
+    with TestClient(app) as client:
+        db = app.state.db
+        assert db._read_only is True
+
+        # Verify NO tables were created (no migrations ran)
+        async def check_tables():
+            async with db.connection.execute("SELECT name FROM sqlite_master WHERE type='table'") as cursor:
+                rows = await cursor.fetchall()
+                # Should be entirely empty
+                assert len(rows) == 0, f"Dashboard incorrectly created tables: {rows}"
+
+        _seed(check_tables())
+
+
 # ---------------------------------------------------------------------------
 # /grids
 # ---------------------------------------------------------------------------

@@ -39,7 +39,6 @@ async def lifespan(app: FastAPI):
     # database in SQLite's read-only mode and cannot create or alter it.
     db = Database(dashboard_settings.database_path, read_only=True)
     await db.connect()
-    await db.migrate()  # idempotent — safe whether or not the bot process already ran this
 
     app.state.db = db
     app.state.repos = Repositories(db)
