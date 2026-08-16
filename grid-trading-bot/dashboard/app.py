@@ -12,12 +12,13 @@ or `python -m dashboard.app` for a plain dev-server run.
 """
 from __future__ import annotations
 
+import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.routers import analytics, grids, health, orders, portfolio, positions, settings, trade_history
@@ -35,25 +36,26 @@ async def lifespan(app: FastAPI):
     setup_logging()
     dashboard_settings = load_dashboard_settings()
 
-    # The bot owns schema migration. The dashboard only opens its existing
-    # database in SQLite's read-only mode and cannot create or alter it.
-    db = Database(dashboard_settings.database_path, read_only=True)
-    await db.connect()
-
-    app.state.db = db
-    app.state.repos = Repositories(db)
-    # Loaded via config.settings.load_settings() (the SAME loader main.py
-    # uses) rather than a second, duplicate settings loader — the
-    # dashboard is expected to run in the same environment as the bot
-    # (same env vars already set), which is also why this reads risk
-    # limits and poll intervals but never a secret (see schemas/settings.py).
+    # Loaded via config.settings.load_settings() rather than a second, duplicate
+    # settings loader so there's ONE source of truth for the database path.
     app.state.settings = load_settings()
 
-    log.info("Dashboard started read-only against database %s", dashboard_settings.database_path)
+    db = Database(app.state.settings.database_path, read_only=True)
+    try:
+        await db.connect()
+        app.state.db = db
+        app.state.repos = Repositories(db)
+    except FileNotFoundError:
+        log.warning("Database not found. Dashboard will return 503 until bot creates it.")
+        app.state.db = None
+        app.state.repos = None
+
+    log.info("Dashboard started read-only against database %s", app.state.settings.database_path)
     try:
         yield
     finally:
-        await db.close()
+        if app.state.db:
+            await app.state.db.close()
         log.info("Dashboard shut down.")
 
 
@@ -73,9 +75,18 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=dashboard_settings.cors_origins,
-        allow_methods=["GET"],
+        allow_credentials=False,
+        allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(sqlite3.OperationalError)
+    async def sqlite_operational_exception_handler(request: Request, exc: sqlite3.OperationalError):
+        # Missing tables (empty/unmigrated DB) or broken DB
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Database unavailable or unmigrated"},
+        )
 
     for router_module in (health, grids, positions, orders, trade_history, portfolio, analytics, settings):
         app.include_router(router_module.router, prefix="/api")

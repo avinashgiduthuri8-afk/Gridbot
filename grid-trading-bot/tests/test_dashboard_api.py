@@ -132,6 +132,30 @@ def test_dashboard_startup_does_not_migrate_database(tmp_path, monkeypatch):
         _seed(check_tables())
 
 
+def test_dashboard_handles_missing_database_gracefully(tmp_path, monkeypatch):
+    """
+    Ensures that if the database file does not exist, the dashboard starts up
+    gracefully but endpoints return a 503 error instead of crashing.
+    """
+    db_path = str(tmp_path / "nonexistent.db")
+    monkeypatch.setenv("DATABASE_PATH", db_path)
+
+    app = create_app()
+    with TestClient(app) as client:
+        # DB should be None in state because it wasn't found
+        assert client.app.state.db is None
+        
+        # Endpoints should return 503
+        resp = client.get("/api/grids")
+        assert resp.status_code == 503
+        assert resp.json() == {"detail": "Database unavailable or unmigrated"}
+
+        resp = client.get("/api/health")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "degraded"
+        assert resp.json()["database_connected"] is False
+
+
 # ---------------------------------------------------------------------------
 # /grids
 # ---------------------------------------------------------------------------

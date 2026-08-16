@@ -20,7 +20,6 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class DashboardSettings:
-    database_path: str
     host: str
     port: int
     cors_origins: list[str]
@@ -43,7 +42,6 @@ def load_dashboard_settings() -> DashboardSettings:
     static_dir = os.getenv("DASHBOARD_STATIC_DIR", "dashboard/static").strip() or None
 
     return DashboardSettings(
-        database_path=os.getenv("DATABASE_PATH", "data/grid_bot.db").strip(),
         host=os.getenv("DASHBOARD_HOST", "0.0.0.0").strip(),
         port=int(port_raw),
         cors_origins=cors_origins,

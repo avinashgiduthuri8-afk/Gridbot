@@ -9,13 +9,18 @@ connection per request.
 """
 from __future__ import annotations
 
-from fastapi import Request
+from fastapi import Request, HTTPException, status
 
 from config.settings import Settings
 from storage.repositories import Repositories
 
 
 async def get_repos(request: Request) -> Repositories:
+    if not hasattr(request.app.state, "repos") or request.app.state.repos is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database unavailable or unmigrated"
+        )
     return request.app.state.repos
 
 

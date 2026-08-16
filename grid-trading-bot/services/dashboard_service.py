@@ -45,8 +45,6 @@ async def list_positions(repos: Repositories, prices: dict[str, float] | None = 
     for grid in all_grids:
         if grid["status"] not in ("active", "paused"):
             continue
-        if grid["total_quantity"] <= 0:
-            continue
         price = prices.get(grid["symbol"])
         breakdown = grid_pnl_breakdown(grid, price)
         positions.append({

@@ -11,10 +11,9 @@ from storage.repositories import Repositories
 router = APIRouter(tags=["positions"])
 
 
-@router.get(
     "/positions", response_model=PositionListResponse, summary="List open positions",
     description=(
-        "Every ACTIVE/PAUSED grid currently holding a nonzero quantity. "
+        "Every ACTIVE/PAUSED grid. "
         "This read-only phase has no live price feed, so unrealized P&L "
         "is 0.0 unless a price is supplied via the optional `prices` query "
         "parameter, e.g. ?prices=BTCINR:5000000,ETHINR:280000."
