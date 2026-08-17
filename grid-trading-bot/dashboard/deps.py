@@ -24,8 +24,10 @@ async def get_repos(request: Request) -> Repositories:
     return request.app.state.repos
 
 
-async def get_app_settings(request: Request) -> Settings:
-    return request.app.state.settings
+async def get_app_settings(request: Request):
+    if hasattr(request.app.state, "dashboard_settings") and request.app.state.dashboard_settings is not None:
+        return request.app.state.dashboard_settings
+    return getattr(request.app.state, "settings", None)
 
 
 def parse_price_overrides(prices: str | None) -> dict[str, float]:

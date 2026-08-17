@@ -15,7 +15,7 @@ router = APIRouter(tags=["settings"])
 @router.get("/settings", response_model=SettingsResponse, summary="Operational settings")
 async def get_settings(
     repos: Repositories = Depends(get_repos),
-    app_settings: Settings = Depends(get_app_settings),
+    app_settings=Depends(get_app_settings),
 ) -> SettingsResponse:
     result = await dashboard_service.get_settings(repos, app_settings)
     return SettingsResponse(

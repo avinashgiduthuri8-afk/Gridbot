@@ -22,7 +22,6 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.routers import analytics, grids, health, orders, portfolio, positions, settings, trade_history
-from config.settings import load_settings
 from dashboard.config import load_dashboard_settings
 from storage.database import Database
 from storage.repositories import Repositories
@@ -35,12 +34,10 @@ log = get_logger("trading")
 async def lifespan(app: FastAPI):
     setup_logging()
     dashboard_settings = load_dashboard_settings()
+    app.state.dashboard_settings = dashboard_settings
+    app.state.settings = dashboard_settings
 
-    # Loaded via config.settings.load_settings() rather than a second, duplicate
-    # settings loader so there's ONE source of truth for the database path.
-    app.state.settings = load_settings()
-
-    db = Database(app.state.settings.database_path, read_only=True)
+    db = Database(dashboard_settings.database_path, read_only=True)
     try:
         await db.connect()
         app.state.db = db
@@ -50,7 +47,7 @@ async def lifespan(app: FastAPI):
         app.state.db = None
         app.state.repos = None
 
-    log.info("Dashboard started read-only against database %s", app.state.settings.database_path)
+    log.info("Dashboard started read-only against database %s", dashboard_settings.database_path)
     try:
         yield
     finally:

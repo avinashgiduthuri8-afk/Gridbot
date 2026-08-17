@@ -156,6 +156,93 @@ def test_dashboard_handles_missing_database_gracefully(tmp_path, monkeypatch):
         assert resp.json()["database_connected"] is False
 
 
+def test_dashboard_startup_without_trading_credentials(tmp_path, monkeypatch):
+    """
+    Proves that the dashboard starts up successfully and connects read-only
+    to the configured SQLite database without requiring any Telegram or
+    CoinDCX credentials in the environment.
+    """
+    db_path = str(tmp_path / "dashboard_no_secrets.db")
+    writer_db = Database(db_path)
+    _seed(writer_db.connect(), writer_db.migrate())
+
+    # Ensure no Telegram / CoinDCX secrets exist in environment
+    for key in (
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
+        "TELEGRAM_ALLOWED_USER_IDS",
+        "COINDCX_API_KEY",
+        "COINDCX_API_SECRET",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    monkeypatch.setenv("DATABASE_PATH", db_path)
+
+    app = create_app()
+    with TestClient(app) as client:
+        # Dashboard starts successfully
+        resp = client.get("/api/health")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+        assert resp.json()["database_connected"] is True
+
+        # Database path is correctly loaded
+        assert app.state.dashboard_settings.database_path == db_path
+        assert app.state.db is not None
+        assert app.state.db.db_path == db_path
+
+        # Database remains read-only
+        assert app.state.db._read_only is True
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            _seed(app.state.db.connection.execute("CREATE TABLE write_fail (id INT)"))
+
+    _seed(writer_db.close())
+
+
+def test_dashboard_serves_frontend_when_present(tmp_path, monkeypatch):
+    """
+    Proves that the dashboard serves index.html on root and SPA routes,
+    and mounts static assets when the configured static directory exists.
+    """
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    index_file = static_dir / "index.html"
+    index_file.write_text("<html><body>Dashboard UI</body></html>", encoding="utf-8")
+    assets_dir = static_dir / "assets"
+    assets_dir.mkdir()
+    asset_file = assets_dir / "app.js"
+    asset_file.write_text("console.log('ui');", encoding="utf-8")
+
+    db_path = str(tmp_path / "db.db")
+    writer_db = Database(db_path)
+    _seed(writer_db.connect(), writer_db.migrate())
+
+    monkeypatch.setenv("DATABASE_PATH", db_path)
+    monkeypatch.setenv("DASHBOARD_STATIC_DIR", str(static_dir))
+
+    for key in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "COINDCX_API_KEY", "COINDCX_API_SECRET"):
+        monkeypatch.delenv(key, raising=False)
+
+    app = create_app()
+    with TestClient(app) as client:
+        # Root serves index.html
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "Dashboard UI" in resp.text
+
+        # Client-side SPA routes fallback to index.html
+        resp = client.get("/grids/view")
+        assert resp.status_code == 200
+        assert "Dashboard UI" in resp.text
+
+        # Assets are served
+        resp = client.get("/assets/app.js")
+        assert resp.status_code == 200
+        assert "console.log('ui')" in resp.text
+
+    _seed(writer_db.close())
+
+
 # ---------------------------------------------------------------------------
 # /grids
 # ---------------------------------------------------------------------------

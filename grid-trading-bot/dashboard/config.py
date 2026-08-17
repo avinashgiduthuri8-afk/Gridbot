@@ -24,6 +24,7 @@ class DashboardSettings:
     port: int
     cors_origins: list[str]
     static_dir: str | None
+    database_path: str
 
 
 def load_dashboard_settings() -> DashboardSettings:
@@ -41,9 +42,12 @@ def load_dashboard_settings() -> DashboardSettings:
     # directory disables this entirely (pure API mode, current default).
     static_dir = os.getenv("DASHBOARD_STATIC_DIR", "dashboard/static").strip() or None
 
+    database_path = os.getenv("DATABASE_PATH", "data/grid_bot.db").strip()
+
     return DashboardSettings(
         host=os.getenv("DASHBOARD_HOST", "0.0.0.0").strip(),
         port=int(port_raw),
         cors_origins=cors_origins,
         static_dir=static_dir,
+        database_path=database_path,
     )
