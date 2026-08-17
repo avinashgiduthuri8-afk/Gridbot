@@ -162,7 +162,7 @@ async def build_trading_summary(repos: Repositories) -> TradingSummary:
     sells = [t for t in trades if t["side"] == "sell" and t["order_id"] != "(dust-writeoff)"]
     dust_writeoffs = [t for t in trades if t.get("order_id") == "(dust-writeoff)"]
 
-    realized_pnls = [t["pnl"] for t in sells]
+    realized_pnls = [float(t["pnl"] or 0.0) for t in sells]
     wins = [p for p in realized_pnls if p > 0]
     losses = [p for p in realized_pnls if p < 0]
     win_rate = (len(wins) / len(realized_pnls) * 100.0) if realized_pnls else 0.0
@@ -170,8 +170,8 @@ async def build_trading_summary(repos: Repositories) -> TradingSummary:
     gross_loss = abs(sum(losses))
     profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else None
 
-    total_realized_profit = sum(g["realized_profit"] for g in all_grids)
-    completed_cycles = sum(g["completed_cycles"] for g in all_grids)
+    total_realized_profit = sum(float(g["realized_profit"] or 0.0) for g in all_grids)
+    completed_cycles = sum(int(g["completed_cycles"] or 0) for g in all_grids)
 
     # Drawdown, computed on the running cumulative realized P&L across
     # trades in execution order — a simple, understandable proxy suitable
@@ -181,7 +181,7 @@ async def build_trading_summary(repos: Repositories) -> TradingSummary:
     peak = 0.0
     max_dd_pct = 0.0
     for t in sorted(sells, key=lambda x: x["executed_at"]):
-        running += t["pnl"]
+        running += float(t["pnl"] or 0.0)
         peak = max(peak, running)
         if peak > 0:
             dd_pct = (peak - running) / peak * 100.0

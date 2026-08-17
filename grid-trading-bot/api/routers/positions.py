@@ -11,6 +11,7 @@ from storage.repositories import Repositories
 router = APIRouter(tags=["positions"])
 
 
+@router.get(
     "/positions", response_model=PositionListResponse, summary="List open positions",
     description=(
         "Every ACTIVE/PAUSED grid. "

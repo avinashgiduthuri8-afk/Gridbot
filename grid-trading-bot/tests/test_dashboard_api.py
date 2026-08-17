@@ -13,6 +13,7 @@ import sqlite3
 import pytest
 from fastapi.testclient import TestClient
 
+# pyrefly: ignore [missing-import]
 from config.constants import GridStatus
 from dashboard.app import create_app
 from storage.database import Database
@@ -267,14 +268,45 @@ def test_list_grids_returns_seeded_grid(dashboard_client):
     assert data["grids"][0]["symbol"] == "BTCINR"
 
 
+def test_list_grids_returns_all_statuses(dashboard_client):
+    repos = dashboard_client.app.state.seed_repos
+    _seed(
+        repos.grids.create(_make_grid(symbol="BTCINR", status=GridStatus.ACTIVE.value)),
+        repos.grids.create(_make_grid(symbol="ETHINR", status=GridStatus.PAUSED.value)),
+        repos.grids.create(_make_grid(symbol="SOLINR", status=GridStatus.STOPPED.value)),
+        repos.grids.create(_make_grid(symbol="DOGEINR", status=GridStatus.COMPLETED.value)),
+    )
+
+    resp = dashboard_client.get("/api/grids")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 4
+    statuses = {g["status"] for g in data["grids"]}
+    assert statuses == {"active", "paused", "stopped", "completed"}
+
+
 def test_get_grid_by_id_success(dashboard_client):
     repos = dashboard_client.app.state.seed_repos
-    grid = _make_grid()
+    grid = _make_grid(
+        symbol="BTCINR",
+        entry_price=5_000_000.0,
+        base_investment=50_000.0,
+        trailing_enabled=True,
+        trailing_percentage=2.5,
+        trailing_peak_price=5_200_000.0,
+    )
     _seed(repos.grids.create(grid))
 
     resp = dashboard_client.get(f"/api/grids/{grid.grid_id}")
     assert resp.status_code == 200
-    assert resp.json()["grid_id"] == grid.grid_id
+    g = resp.json()
+    assert g["grid_id"] == grid.grid_id
+    assert g["symbol"] == "BTCINR"
+    assert g["entry_price"] == 5_000_000.0
+    assert g["base_investment"] == 50_000.0
+    assert g["trailing_enabled"] is True
+    assert g["trailing_percentage"] == 2.5
+    assert g["trailing_peak_price"] == 5_200_000.0
 
 
 def test_get_grid_invalid_id_returns_404(dashboard_client):
@@ -304,6 +336,27 @@ def test_positions_excludes_completed_and_stopped_grids(dashboard_client):
     data = resp.json()
     assert data["count"] == 1
     assert data["positions"][0]["symbol"] == "BTCINR"
+
+
+def test_positions_returns_active_and_paused_grids(dashboard_client):
+    repos = dashboard_client.app.state.seed_repos
+    active_grid = _make_grid(symbol="BTCINR", status=GridStatus.ACTIVE.value)
+    paused_grid = _make_grid(symbol="ETHINR", status=GridStatus.PAUSED.value)
+    stopped_grid = _make_grid(symbol="SOLINR", status=GridStatus.STOPPED.value)
+    _seed(
+        repos.grids.create(active_grid),
+        repos.grids.create(paused_grid),
+        repos.grids.create(stopped_grid),
+    )
+
+    resp = dashboard_client.get("/api/positions")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 2
+    symbols = {p["symbol"] for p in data["positions"]}
+    assert symbols == {"BTCINR", "ETHINR"}
+    statuses = {p["status"] for p in data["positions"]}
+    assert statuses == {"active", "paused"}
 
 
 def test_positions_without_price_gives_zero_unrealized(dashboard_client):
@@ -337,6 +390,45 @@ def test_positions_malformed_price_override_ignored_gracefully(dashboard_client)
     assert resp.status_code == 200
     pos = resp.json()["positions"][0]
     assert pos["current_price"] is None  # malformed entries are skipped, not a crash
+
+
+def test_positions_field_values_and_json_safety(dashboard_client):
+    repos = dashboard_client.app.state.seed_repos
+    grid = _make_grid(
+        symbol="BTCINR",
+        status=GridStatus.ACTIVE.value,
+        mode="paper",
+        total_quantity=0.05,
+        average_entry_price=4_500_000.0,
+        total_investment=225_000.0,
+        realized_profit=1_250.0,
+        current_level=2,
+        max_levels=8,
+        trailing_enabled=True,
+        trailing_peak_price=4_800_000.0,
+    )
+    _seed(repos.grids.create(grid))
+
+    resp = dashboard_client.get("/api/positions?prices=BTCINR:4700000")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 1
+    pos = data["positions"][0]
+    assert pos["grid_id"] == grid.grid_id
+    assert pos["symbol"] == "BTCINR"
+    assert pos["status"] == "active"
+    assert pos["mode"] == "paper"
+    assert pos["quantity"] == 0.05
+    assert pos["average_entry_price"] == 4_500_000.0
+    assert pos["invested"] == 225_000.0
+    assert pos["current_price"] == 4_700_000.0
+    assert pos["realized_pnl"] == 1_250.0
+    assert pos["unrealized_pnl"] == pytest.approx(10_000.0)
+    assert pos["combined_pnl"] == pytest.approx(11_250.0)
+    assert pos["current_level"] == 2
+    assert pos["max_levels"] == 8
+    assert pos["trailing_enabled"] is True
+    assert pos["trailing_peak_price"] == 4_800_000.0
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +494,172 @@ def test_trade_history_returns_seeded_trade(dashboard_client):
     data = resp.json()
     assert data["count"] == 1
     assert data["trades"][0]["trade_id"] == trade.trade_id
+
+
+def test_trade_history_multiple_records_all_returned(dashboard_client):
+    repos = dashboard_client.app.state.seed_repos
+    grid = _make_grid()
+    trades = [_make_trade(grid.grid_id, side="sell", pnl=float(i * 100)) for i in range(5)]
+    _seed(repos.grids.create(grid), *[repos.trade_history.record(t) for t in trades])
+
+    resp = dashboard_client.get("/api/trade-history")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 5
+    returned_ids = {t["trade_id"] for t in data["trades"]}
+    assert returned_ids == {t.trade_id for t in trades}
+
+
+def test_trade_history_field_values_and_json_safety(dashboard_client):
+    repos = dashboard_client.app.state.seed_repos
+    grid = _make_grid()
+    trade = _make_trade(
+        grid.grid_id,
+        symbol="BTCINR",
+        side="sell",
+        price=5_200_000.0,
+        quantity=0.01,
+        investment_inr=52_000.0,
+        fee=5.2,
+        pnl=1_500.0,
+    )
+    _seed(repos.grids.create(grid), repos.trade_history.record(trade))
+
+    resp = dashboard_client.get("/api/trade-history")
+    assert resp.status_code == 200
+    t = resp.json()["trades"][0]
+    assert t["trade_id"] == trade.trade_id
+    assert t["grid_id"] == grid.grid_id
+    assert t["symbol"] == "BTCINR"
+    assert t["side"] == "sell"
+    assert t["price"] == 5_200_000.0
+    assert t["quantity"] == 0.01
+    assert t["investment_inr"] == 52_000.0
+    assert t["fee"] == 5.2
+    assert t["pnl"] == 1_500.0
+
+
+def test_trade_history_old_records_not_filtered(dashboard_client):
+    """Simulates records created at an old timestamp — must still appear."""
+    repos = dashboard_client.app.state.seed_repos
+    grid = _make_grid()
+    old_trade = _make_trade(grid.grid_id, executed_at="2024-01-01T00:00:00")
+    new_trade = _make_trade(grid.grid_id, executed_at="2026-08-01T12:00:00")
+    _seed(repos.grids.create(grid), repos.trade_history.record(old_trade), repos.trade_history.record(new_trade))
+
+    resp = dashboard_client.get("/api/trade-history")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 2
+    returned_ids = {t["trade_id"] for t in data["trades"]}
+    assert old_trade.trade_id in returned_ids
+    assert new_trade.trade_id in returned_ids
+
+
+# ---------------------------------------------------------------------------
+# /orders — Group 3 extended
+# ---------------------------------------------------------------------------
+
+
+def test_orders_multiple_statuses_all_returned(dashboard_client):
+    repos = dashboard_client.app.state.seed_repos
+    grid = _make_grid()
+    statuses = ["pending", "filled", "cancelled", "failed"]
+    orders = [_make_order(grid.grid_id, status=s) for s in statuses]
+    _seed(repos.grids.create(grid), *[repos.orders.create(o) for o in orders])
+
+    resp = dashboard_client.get("/api/orders")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 4
+    returned_statuses = {o["status"] for o in data["orders"]}
+    assert returned_statuses == {"pending", "filled", "cancelled", "failed"}
+
+
+def test_orders_field_values_and_json_safety(dashboard_client):
+    repos = dashboard_client.app.state.seed_repos
+    grid = _make_grid()
+    order = _make_order(
+        grid.grid_id,
+        symbol="BTCINR",
+        side="buy",
+        order_type="market_order",
+        price=5_000_000.0,
+        quantity=0.01,
+        filled_quantity=0.01,
+        filled_price=5_000_000.0,
+        status="filled",
+        fee=5.0,
+    )
+    _seed(repos.grids.create(grid), repos.orders.create(order))
+
+    resp = dashboard_client.get("/api/orders")
+    assert resp.status_code == 200
+    o = resp.json()["orders"][0]
+    assert o["order_id"] == order.order_id
+    assert o["grid_id"] == grid.grid_id
+    assert o["symbol"] == "BTCINR"
+    assert o["side"] == "buy"
+    assert o["order_type"] == "market_order"
+    assert o["price"] == 5_000_000.0
+    assert o["quantity"] == 0.01
+    assert o["filled_quantity"] == 0.01
+    assert o["filled_price"] == 5_000_000.0
+    assert o["status"] == "filled"
+    assert o["fee"] == 5.0
+    assert o["reconciliation_status"] == "not_needed"
+
+
+def test_orders_old_records_not_filtered(dashboard_client):
+    """Records with old created_at timestamps must still be returned."""
+    repos = dashboard_client.app.state.seed_repos
+    grid = _make_grid()
+    old_order = _make_order(grid.grid_id, status="filled", created_at="2024-01-01T00:00:00", updated_at="2024-01-01T00:00:00")
+    new_order = _make_order(grid.grid_id, status="filled", created_at="2026-08-01T12:00:00", updated_at="2026-08-01T12:00:00")
+    _seed(repos.grids.create(grid), repos.orders.create(old_order), repos.orders.create(new_order))
+
+    resp = dashboard_client.get("/api/orders")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 2
+    returned_ids = {o["order_id"] for o in data["orders"]}
+    assert old_order.order_id in returned_ids
+    assert new_order.order_id in returned_ids
+
+
+def test_orders_and_trades_visible_after_restart(tmp_path, monkeypatch):
+    """Records written in session A must still be readable in session B (restart simulation)."""
+    db_path = str(tmp_path / "persist_test.db")
+
+    # Session A: write then close
+    writer_db = Database(db_path)
+    _seed(writer_db.connect(), writer_db.migrate())
+    writer_repos = Repositories(writer_db)
+    grid = _make_grid()
+    order = _make_order(grid.grid_id)
+    trade = _make_trade(grid.grid_id)
+    _seed(
+        writer_repos.grids.create(grid),
+        writer_repos.orders.create(order),
+        writer_repos.trade_history.record(trade),
+    )
+    _seed(writer_db.close())
+
+    # Session B: fresh dashboard connects in read-only mode
+    monkeypatch.setenv("DATABASE_PATH", db_path)
+    from dashboard.app import create_app
+    app = create_app()
+    from fastapi.testclient import TestClient
+    with TestClient(app) as client:
+        o_resp = client.get("/api/orders")
+        assert o_resp.status_code == 200
+        assert o_resp.json()["count"] == 1
+        assert o_resp.json()["orders"][0]["order_id"] == order.order_id
+
+        t_resp = client.get("/api/trade-history")
+        assert t_resp.status_code == 200
+        assert t_resp.json()["count"] == 1
+        assert t_resp.json()["trades"][0]["trade_id"] == trade.trade_id
 
 
 # ---------------------------------------------------------------------------
@@ -476,10 +734,161 @@ def test_analytics_counts_buys_and_sells(dashboard_client):
     assert data["total_sells"] == 1
 
 
+def test_analytics_total_realized_profit_sums_all_grids(dashboard_client):
+    repos = dashboard_client.app.state.seed_repos
+    _seed(
+        repos.grids.create(_make_grid(symbol="BTCINR", realized_profit=1_000.0, status=GridStatus.ACTIVE.value)),
+        repos.grids.create(_make_grid(symbol="ETHINR", realized_profit=2_500.0, status=GridStatus.COMPLETED.value, total_quantity=0.0)),
+        repos.grids.create(_make_grid(symbol="SOLINR", realized_profit=500.0, status=GridStatus.STOPPED.value, total_quantity=0.0)),
+    )
+
+    resp = dashboard_client.get("/api/analytics")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_realized_profit"] == pytest.approx(4_000.0)
+
+
+def test_analytics_win_rate_calculation(dashboard_client):
+    repos = dashboard_client.app.state.seed_repos
+    grid = _make_grid()
+    _seed(
+        repos.grids.create(grid),
+        repos.trade_history.record(_make_trade(grid.grid_id, side="sell", pnl=200.0)),
+        repos.trade_history.record(_make_trade(grid.grid_id, side="sell", pnl=-50.0)),
+        repos.trade_history.record(_make_trade(grid.grid_id, side="sell", pnl=100.0)),
+    )
+
+    resp = dashboard_client.get("/api/analytics")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_sells"] == 3
+    assert data["win_rate_pct"] == pytest.approx(200.0 / 3, rel=1e-3)  # 2 wins out of 3
+    assert data["profit_factor"] == pytest.approx(300.0 / 50.0, rel=1e-3)
+
+
+def test_analytics_old_trades_not_filtered(dashboard_client):
+    """Trades from far past timestamps must still appear in analytics."""
+    repos = dashboard_client.app.state.seed_repos
+    grid = _make_grid()
+    _seed(
+        repos.grids.create(grid),
+        repos.trade_history.record(_make_trade(grid.grid_id, side="sell", pnl=300.0, executed_at="2023-05-01T00:00:00")),
+        repos.trade_history.record(_make_trade(grid.grid_id, side="sell", pnl=150.0, executed_at="2025-01-15T00:00:00")),
+    )
+
+    resp = dashboard_client.get("/api/analytics")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_sells"] == 2
+    assert data["win_rate_pct"] == pytest.approx(100.0)
+
+
+def test_analytics_completed_cycles_sums_all_grids(dashboard_client):
+    repos = dashboard_client.app.state.seed_repos
+    _seed(
+        repos.grids.create(_make_grid(symbol="BTCINR", completed_cycles=5, status=GridStatus.ACTIVE.value)),
+        repos.grids.create(_make_grid(symbol="ETHINR", completed_cycles=3, status=GridStatus.COMPLETED.value, total_quantity=0.0)),
+    )
+
+    resp = dashboard_client.get("/api/analytics")
+    assert resp.status_code == 200
+    assert resp.json()["completed_cycles"] == 8
+
+
+def test_portfolio_total_realized_includes_completed_grids(dashboard_client):
+    repos = dashboard_client.app.state.seed_repos
+    _seed(
+        repos.grids.create(_make_grid(
+            symbol="BTCINR", status=GridStatus.ACTIVE.value,
+            realized_profit=1_000.0, total_quantity=0.01, total_investment=50_000.0,
+        )),
+        repos.grids.create(_make_grid(
+            symbol="ETHINR", status=GridStatus.COMPLETED.value,
+            realized_profit=3_000.0, total_quantity=0.0, total_investment=30_000.0,
+        )),
+    )
+
+    resp = dashboard_client.get("/api/portfolio")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_realized"] == pytest.approx(4_000.0)
+    assert data["completed_grid_count"] == 1
+    assert data["active_grid_count"] == 1
+
+
+def test_portfolio_combined_pnl_correctness(dashboard_client):
+    repos = dashboard_client.app.state.seed_repos
+    grid = _make_grid(
+        symbol="BTCINR", status=GridStatus.ACTIVE.value,
+        realized_profit=500.0,
+        average_entry_price=5_000_000.0, total_quantity=0.01, total_investment=50_000.0,
+    )
+    _seed(repos.grids.create(grid))
+
+    resp = dashboard_client.get("/api/portfolio?prices=BTCINR:5100000")
+    assert resp.status_code == 200
+    data = resp.json()
+    # unrealized = (5_100_000 - 5_000_000) * 0.01 = 1_000.0
+    assert data["total_unrealized"] == pytest.approx(1_000.0)
+    # combined = 500 + 1000
+    assert data["combined_total"] == pytest.approx(1_500.0)
+
+
+def test_portfolio_return_pct_correctness(dashboard_client):
+    repos = dashboard_client.app.state.seed_repos
+    grid = _make_grid(
+        symbol="BTCINR", status=GridStatus.ACTIVE.value,
+        realized_profit=2_500.0, total_quantity=0.0, total_investment=50_000.0,
+    )
+    _seed(repos.grids.create(grid))
+
+    resp = dashboard_client.get("/api/portfolio")
+    data = resp.json()
+    # return_pct = (2500 / 50000) * 100 = 5.0%
+    assert data["portfolio_return_pct"] == pytest.approx(5.0)
+
+
+def test_portfolio_json_safe_all_fields_present(dashboard_client):
+    resp = dashboard_client.get("/api/portfolio")
+    assert resp.status_code == 200
+    data = resp.json()
+    for field in ("total_realized", "total_unrealized", "total_invested", "combined_total",
+                  "portfolio_return_pct", "active_grid_count", "paused_grid_count",
+                  "completed_grid_count", "stopped_grid_count"):
+        assert field in data, f"Missing field: {field}"
+        assert data[field] is not None
+
+
+def test_portfolio_and_analytics_visible_after_restart(tmp_path, monkeypatch):
+    """Portfolio/analytics data written in session A must be readable in session B."""
+    db_path = str(tmp_path / "persist_portfolio.db")
+
+    writer_db = Database(db_path)
+    _seed(writer_db.connect(), writer_db.migrate())
+    writer_repos = Repositories(writer_db)
+    grid = _make_grid(realized_profit=1_200.0, completed_cycles=4)
+    trade = _make_trade(grid.grid_id, side="sell", pnl=300.0)
+    _seed(writer_repos.grids.create(grid), writer_repos.trade_history.record(trade))
+    _seed(writer_db.close())
+
+    monkeypatch.setenv("DATABASE_PATH", db_path)
+    from dashboard.app import create_app
+    app = create_app()
+    from fastapi.testclient import TestClient
+    with TestClient(app) as client:
+        p_resp = client.get("/api/portfolio")
+        assert p_resp.status_code == 200
+        assert p_resp.json()["total_realized"] == pytest.approx(1_200.0)
+
+        a_resp = client.get("/api/analytics")
+        assert a_resp.status_code == 200
+        assert a_resp.json()["total_sells"] == 1
+        assert a_resp.json()["completed_cycles"] == 4
+
+
 # ---------------------------------------------------------------------------
 # /settings
 # ---------------------------------------------------------------------------
-
 
 def test_settings_returns_risk_and_operational_fields(dashboard_client):
     resp = dashboard_client.get("/api/settings")
@@ -518,3 +927,167 @@ def test_openapi_schema_available(dashboard_client):
 def test_swagger_docs_available(dashboard_client):
     resp = dashboard_client.get("/docs")
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Group 6 — Frontend UI <-> Backend API Integration Contract Verification
+# ---------------------------------------------------------------------------
+
+
+def test_frontend_api_spec_openapi_yaml_schema_alignment(dashboard_client):
+    """
+    Verifies that the generated openapi.json from the live FastAPI application
+    matches every path and schema defined in lib/api-spec/openapi.yaml (used by
+    Orval to generate @workspace/api-client-react and @workspace/api-zod).
+    """
+    import yaml
+    from pathlib import Path
+
+    # Find openapi.yaml in lib/api-spec/
+    yaml_path = Path(__file__).parents[2] / "lib" / "api-spec" / "openapi.yaml"
+    assert yaml_path.is_file(), f"openapi.yaml missing at {yaml_path}"
+
+    with open(yaml_path, "r", encoding="utf-8") as f:
+        spec = yaml.safe_load(f)
+
+    # Fetch live OpenAPI spec from FastAPI app
+    resp = dashboard_client.get("/openapi.json")
+    assert resp.status_code == 200
+    live_schema = resp.json()
+
+    # 1. Verify every path in openapi.yaml exists in live_schema with /api prefix
+    yaml_paths = set(spec.get("paths", {}).keys())
+    live_paths = set(live_schema.get("paths", {}).keys())
+
+    for yp in yaml_paths:
+        expected_live_path = f"/api{yp}"
+        assert expected_live_path in live_paths, f"Path {yp} in openapi.yaml not found as {expected_live_path} in live OpenAPI"
+
+    # 2. Verify all core component schemas are defined in live schema
+    expected_schemas = {
+        "GridResponse", "GridListResponse", "PositionResponse", "PositionListResponse",
+        "OrderResponse", "OrderListResponse", "TradeResponse", "TradeHistoryResponse",
+        "PortfolioResponse", "AnalyticsResponse", "SettingsResponse", "RiskSettingsResponse",
+        "HealthResponse", "HTTPValidationError",
+    }
+    live_schemas = set(live_schema.get("components", {}).get("schemas", {}).keys())
+    missing_schemas = expected_schemas - live_schemas
+    assert not missing_schemas, f"Missing schemas in live OpenAPI: {missing_schemas}"
+
+
+def test_frontend_custom_fetch_error_compatibility(dashboard_client):
+    """
+    Verifies that API error responses (404, 422, 503) return a JSON object with a
+    'detail' field, matching customFetch's getStringField(data, 'detail') error parser.
+    """
+    # 404
+    r404 = dashboard_client.get("/api/grids/nonexistent_id")
+    assert r404.status_code == 404
+    assert "detail" in r404.json()
+
+    # 422
+    r422 = dashboard_client.get("/api/orders?limit=-1")
+    assert r422.status_code == 422
+    assert "detail" in r422.json()
+
+    # 503 (simulated via missing DB)
+    from dashboard.app import create_app
+    app_no_db = create_app()
+    app_no_db.state.repos = None
+    with TestClient(app_no_db) as client_no_db:
+        r503 = client_no_db.get("/api/grids")
+        assert r503.status_code == 503
+        assert "detail" in r503.json()
+        assert r503.json()["detail"] == "Database unavailable or unmigrated"
+
+
+def test_frontend_cors_headers_supported(dashboard_client):
+    """
+    Verifies that the FastAPI backend sends appropriate CORS headers for
+    cross-origin frontend requests.
+    """
+    resp = dashboard_client.options(
+        "/api/health",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("access-control-allow-origin") in ("*", "http://localhost:5173")
+
+
+# ---------------------------------------------------------------------------
+# Group 7 — Dashboard Functional & UI Quality Contract Tests
+# ---------------------------------------------------------------------------
+
+
+def test_ui_currency_inr_and_percentage_formatting_precision(dashboard_client):
+    """
+    Verifies that all financial amounts (INR) and percentage fields return
+    Python float numbers suitable for frontend formatting (₹ / %).
+    """
+    repos = dashboard_client.app.state.seed_repos
+    grid = _make_grid(
+        entry_price=5_000_000.0,
+        base_investment=50_000.0,
+        realized_profit=1_250.50,
+        dip_percentage=5.0,
+        profit_percentage=4.5,
+        stop_loss_percentage=15.0,
+    )
+    _seed(repos.grids.create(grid))
+
+    # Portfolio currency/percentage precision
+    p_resp = dashboard_client.get("/api/portfolio")
+    assert p_resp.status_code == 200
+    p_data = p_resp.json()
+    assert isinstance(p_data["total_realized"], (int, float))
+    assert isinstance(p_data["portfolio_return_pct"], (int, float))
+
+    # Analytics percentage precision
+    a_resp = dashboard_client.get("/api/analytics")
+    assert a_resp.status_code == 200
+    a_data = a_resp.json()
+    assert isinstance(a_data["win_rate_pct"], (int, float))
+    assert isinstance(a_data["max_drawdown_pct"], (int, float))
+
+
+def test_ui_nullable_fields_render_safely_as_null(dashboard_client):
+    """
+    Verifies that all optional/nullable fields return explicit `null` (None in JSON)
+    rather than missing keys or invalid default strings that would crash UI components.
+    """
+    repos = dashboard_client.app.state.seed_repos
+    grid = _make_grid(trailing_enabled=False)
+    order = _make_order(grid.grid_id, exchange_order_id=None)
+    _seed(repos.grids.create(grid), repos.orders.create(order))
+
+    # Grid trailing nulls
+    g_resp = dashboard_client.get(f"/api/grids/{grid.grid_id}")
+    assert g_resp.status_code == 200
+    g_data = g_resp.json()
+    assert g_data["trailing_percentage"] is None
+    assert g_data["trailing_peak_price"] is None
+
+    # Order exchange_order_id null
+    o_resp = dashboard_client.get(f"/api/orders?grid_id={grid.grid_id}")
+    assert o_resp.status_code == 200
+    o_data = o_resp.json()
+    assert o_data["orders"][0]["exchange_order_id"] is None
+
+    # Analytics profit_factor null on 0 losing trades
+    an_resp = dashboard_client.get("/api/analytics")
+    assert an_resp.status_code == 200
+    assert an_resp.json()["profit_factor"] is None
+
+
+def test_ui_empty_states_payload_completeness(dashboard_client):
+    """
+    Verifies that empty state responses return valid structured objects with 0 counts/empty arrays
+    so UI pages render empty state UI without undefined access errors.
+    """
+    assert dashboard_client.get("/api/grids").json() == {"grids": [], "count": 0}
+    assert dashboard_client.get("/api/positions").json() == {"positions": [], "count": 0}
+    assert dashboard_client.get("/api/orders").json() == {"orders": [], "count": 0}
+    assert dashboard_client.get("/api/trade-history").json() == {"trades": [], "count": 0}
