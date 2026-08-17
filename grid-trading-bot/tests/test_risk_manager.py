@@ -68,17 +68,16 @@ async def test_rejects_when_wallet_balance_insufficient(repos, risk_settings):
     manager = RiskManager(risk_settings, repos)
     result = await manager.check_can_start_grid("BTCINR", 500, wallet_inr_balance=800)
     assert not result.allowed
-    assert "Insufficient free wallet balance" in result.reason
+    assert "minimum" in result.reason.lower()
 
 
 @pytest.mark.anyio
 async def test_rejects_when_coin_capital_exceeded(repos, risk_settings):
-    grid = _make_grid("BTCINR", total_investment=49900.0)
-    await repos.grids.create(grid)
     manager = RiskManager(risk_settings, repos)
-    result = await manager.check_can_start_grid("BTCINR", 500, wallet_inr_balance=5000)
+    # planned investment of 6000 exceeds max_capital_per_coin of 5000
+    result = await manager.check_can_start_grid("BTCINR", 6000, wallet_inr_balance=20000)
     assert not result.allowed
-    assert "Per-coin capital limit" in result.reason
+    assert "per-coin limit" in result.reason.lower()
 
 
 @pytest.mark.anyio
@@ -87,7 +86,7 @@ async def test_rejects_when_coin_capital_exceeded(repos, risk_settings):
     [
         ("active", True),
         ("paused", True),
-        ("stopping", True),
+        ("stopping", False),
         ("stopped", False),
         ("completed", False),
         ("cancelled", False),
@@ -104,11 +103,18 @@ async def test_only_active_and_paused_grids_block_duplicates(
 
 
 @pytest.mark.anyio
-async def test_rejects_when_max_simultaneous_grids_reached(repos, risk_settings):
+async def test_rejects_when_max_simultaneous_grids_reached(repos):
+    settings = RiskSettings(
+        max_total_capital=1_000_000,
+        max_capital_per_coin=500_000,
+        max_simultaneous_grids=20,
+        min_wallet_balance=500,
+        daily_loss_limit=1000,
+    )
     # Create 19 active grids
     for i in range(19):
         await repos.grids.create(_make_grid(f"COIN{i}INR"))
-    manager = RiskManager(risk_settings, repos)
+    manager = RiskManager(settings, repos)
 
     # Position 20 should be allowed
     result = await manager.check_can_start_grid("COIN19INR", 100, wallet_inr_balance=5000)

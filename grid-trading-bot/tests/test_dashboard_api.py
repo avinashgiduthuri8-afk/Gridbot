@@ -116,6 +116,7 @@ def test_dashboard_startup_does_not_migrate_database(tmp_path, monkeypatch):
     does not create any tables, and leaves the schema entirely empty.
     """
     db_path = str(tmp_path / "dashboard_unmigrated.db")
+    open(db_path, "w").close()
     monkeypatch.setenv("DATABASE_PATH", db_path)
 
     app = create_app()
@@ -165,7 +166,7 @@ def test_dashboard_startup_without_trading_credentials(tmp_path, monkeypatch):
     """
     db_path = str(tmp_path / "dashboard_no_secrets.db")
     writer_db = Database(db_path)
-    _seed(writer_db.connect(), writer_db.migrate())
+    _seed(writer_db.connect(), writer_db.migrate(), writer_db.close())
 
     # Ensure no Telegram / CoinDCX secrets exist in environment
     for key in (
@@ -190,7 +191,7 @@ def test_dashboard_startup_without_trading_credentials(tmp_path, monkeypatch):
         # Database path is correctly loaded
         assert app.state.dashboard_settings.database_path == db_path
         assert app.state.db is not None
-        assert app.state.db.db_path == db_path
+        assert app.state.db._db_path == db_path
 
         # Database remains read-only
         assert app.state.db._read_only is True
@@ -993,8 +994,8 @@ def test_frontend_custom_fetch_error_compatibility(dashboard_client):
     # 503 (simulated via missing DB)
     from dashboard.app import create_app
     app_no_db = create_app()
-    app_no_db.state.repos = None
     with TestClient(app_no_db) as client_no_db:
+        client_no_db.app.state.repos = None
         r503 = client_no_db.get("/api/grids")
         assert r503.status_code == 503
         assert "detail" in r503.json()
