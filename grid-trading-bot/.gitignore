@@ -3,6 +3,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .pytest_tmp/
+.pytest_temp/
+.pytest-full.*
+*.sqlite3
+*.bak
 dashboard/static/
 data/*.db
 data/*.db-journal
