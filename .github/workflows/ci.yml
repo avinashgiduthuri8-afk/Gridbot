@@ -21,22 +21,21 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
-          # Optional dependencies (only required when the corresponding
-          # feature is enabled), installed here too so their modules are
-          # exercised by the test suite rather than silently skipped.
+          pip install -r grid-trading-bot/requirements.txt
           pip install google-auth==2.35.0
           pip install aiohttp==3.11.11
 
-      # Fast first gate: catches syntax errors in seconds, before spending
-      # time on the full test suite below.
       - name: Compile-check every module
         run: |
-          python -m compileall -q . -x '(\.venv|venv)/'
+          python -m compileall -q grid-trading-bot/ -x '(\.venv|venv)/'
+
+      - name: Check git diff
+        run: |
+          git diff --check
 
       - name: Run test suite
         run: |
-          pytest -v
+          pytest grid-trading-bot/tests -v
 
   docker-build:
     runs-on: ubuntu-latest
@@ -45,4 +44,4 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t dca-gridbot:ci .
+        run: docker build -t dca-gridbot:ci -f grid-trading-bot/Dockerfile grid-trading-bot/
