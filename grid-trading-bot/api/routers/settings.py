@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from config.settings import Settings
 from dashboard.deps import get_app_settings, get_repos
 from schemas.settings import RiskSettingsResponse, SettingsResponse
 from services import dashboard_service

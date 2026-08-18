@@ -19,7 +19,6 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from config.settings import Settings
 from storage.repositories import Repositories
 from trading.portfolio_metrics import grid_pnl_breakdown, portfolio_totals
 

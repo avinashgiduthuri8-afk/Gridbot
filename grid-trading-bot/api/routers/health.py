@@ -1,11 +1,9 @@
 """GET /health — basic liveness/readiness check."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 
-from dashboard.deps import get_repos
 from schemas.health import HealthResponse
-from storage.repositories import Repositories
 
 router = APIRouter(tags=["health"])
 
