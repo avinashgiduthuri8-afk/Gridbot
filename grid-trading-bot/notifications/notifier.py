@@ -26,13 +26,15 @@ _SYNC_ERROR_COOLDOWN_SECONDS = 600  # 10 minutes
 
 
 class Notifier:
-    def __init__(self, bot: Bot, chat_ids: tuple[int, ...]) -> None:
+    def __init__(self, bot: Bot | None, chat_ids: tuple[int, ...]) -> None:
         self._bot = bot
         self._chat_ids = chat_ids
         # Tracks when each sync-error context was last notified (monotonic seconds).
         self._last_sync_error_notified: dict[str, float] = {}
 
     async def send(self, message: str) -> None:
+        if not self._bot or not self._chat_ids:
+            return
         """Send *message* to all configured chat IDs concurrently.
 
         Messages longer than Telegram's limit are truncated at a tag-safe

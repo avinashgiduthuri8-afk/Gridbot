@@ -173,7 +173,15 @@ class Settings:
 
 def load_settings() -> Settings:
     """Load and validate all configuration. Raises ConfigError if invalid."""
-    telegram_owner_id = _require_int("TELEGRAM_CHAT_ID")
+    raw_chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    telegram_owner_id = 0
+    if raw_chat_id:
+        try:
+            telegram_owner_id = int(raw_chat_id)
+        except ValueError as exc:
+            raise ConfigError(f"Environment variable TELEGRAM_CHAT_ID must be an integer, got {raw_chat_id!r}") from exc
+
+    telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     allowed_ids = _parse_ids("TELEGRAM_ALLOWED_USER_IDS", os.getenv("TELEGRAM_ALLOWED_USER_IDS", ""))
 
     risk = RiskSettings(
@@ -231,7 +239,7 @@ def load_settings() -> Settings:
     _validate_range("DAILY_SUMMARY_INTERVAL_SECONDS", daily_summary_interval_seconds, minimum=1)
 
     return Settings(
-        telegram_bot_token=_require("TELEGRAM_BOT_TOKEN"),
+        telegram_bot_token=telegram_bot_token,
         telegram_owner_id=telegram_owner_id,
         telegram_allowed_ids=allowed_ids,
         coindcx_api_key=_require("COINDCX_API_KEY"),

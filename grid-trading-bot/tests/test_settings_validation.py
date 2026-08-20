@@ -63,3 +63,35 @@ def test_rejects_invalid_owner_id(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(ConfigError, match="TELEGRAM_CHAT_ID"):
         load_settings()
+
+
+def test_load_settings_succeeds_without_telegram(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Telegram credentials are now optional (for Web Dashboard primary mode)."""
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.setenv("COINDCX_API_KEY", "test-key")
+    monkeypatch.setenv("COINDCX_API_SECRET", "test-secret")
+
+    settings = load_settings()
+    assert settings.telegram_bot_token == ""
+    assert settings.telegram_owner_id == 0
+    assert settings.coindcx_api_key == "test-key"
+    assert settings.coindcx_api_secret == "test-secret"
+    assert settings.is_authorized(123456) is False
+
+
+def test_load_settings_requires_coindcx_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CoinDCX API Key & Secret remain strictly mandatory for real trading."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123456")
+    monkeypatch.delenv("COINDCX_API_KEY", raising=False)
+    monkeypatch.setenv("COINDCX_API_SECRET", "test-secret")
+
+    with pytest.raises(ConfigError, match="COINDCX_API_KEY"):
+        load_settings()
+
+    monkeypatch.setenv("COINDCX_API_KEY", "test-key")
+    monkeypatch.delenv("COINDCX_API_SECRET", raising=False)
+
+    with pytest.raises(ConfigError, match="COINDCX_API_SECRET"):
+        load_settings()

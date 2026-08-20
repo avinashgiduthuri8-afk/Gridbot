@@ -186,8 +186,14 @@ async def async_main() -> None:
         base_url=settings.coindcx_base_url,
     )
 
-    bot = Bot(token=settings.telegram_bot_token)
-    chat_ids = tuple({settings.telegram_owner_id, *settings.telegram_allowed_ids})
+    bot: Bot | None = None
+    chat_ids: tuple[int, ...] = ()
+    if settings.telegram_bot_token and settings.telegram_owner_id > 0:
+        bot = Bot(token=settings.telegram_bot_token)
+        chat_ids = tuple({settings.telegram_owner_id, *settings.telegram_allowed_ids})
+    else:
+        log.info("Telegram credentials not configured — running in dashboard/headless mode.")
+
     notifier = Notifier(bot, chat_ids)
 
     if restore_summary is not None:
@@ -247,17 +253,19 @@ async def async_main() -> None:
     )
     await price_monitor.load_interval()
 
-    app_context = BotAppContext(
-        settings=settings,
-        repos=repos,
-        exchange=exchange,
-        dca_manager=dca_manager,
-        risk_manager=risk_manager,
-        notifier=notifier,
-        alert_manager=alert_manager,
-        price_monitor=price_monitor,
-    )
-    application = build_application(app_context)
+    application = None
+    if settings.telegram_bot_token and settings.telegram_owner_id > 0:
+        app_context = BotAppContext(
+            settings=settings,
+            repos=repos,
+            exchange=exchange,
+            dca_manager=dca_manager,
+            risk_manager=risk_manager,
+            notifier=notifier,
+            alert_manager=alert_manager,
+            price_monitor=price_monitor,
+        )
+        application = build_application(app_context)
 
     await _start_monitors_after_recovery(recovery_manager, order_monitor, price_monitor)
 
@@ -344,6 +352,11 @@ async def async_main() -> None:
         from dashboard.config import load_dashboard_settings
 
         dashboard_settings = load_dashboard_settings()
+        dashboard_app.state.dca_manager = dca_manager
+        dashboard_app.state.risk_manager = risk_manager
+        dashboard_app.state.repos = repos
+        dashboard_app.state.exchange = exchange
+        dashboard_app.state.settings = settings
         uvicorn_config = uvicorn.Config(
             dashboard_app,
             host=dashboard_settings.host,

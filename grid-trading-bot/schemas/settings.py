@@ -1,4 +1,4 @@
-"""Response models for GET /settings.
+"""Response and Request models for /settings and /emergency-stop.
 
 Deliberately excludes every secret (telegram_bot_token, coindcx_api_key,
 coindcx_api_secret) and identifying fields (telegram_owner_id,
@@ -28,3 +28,12 @@ class SettingsResponse(BaseModel):
     backup_enabled: bool
     webhook_enabled: bool
     grid_defaults: dict | None = None
+
+
+class EmergencyStopRequest(BaseModel):
+    enabled: bool
+
+
+class EmergencyStopResponse(BaseModel):
+    emergency_stop: bool
+    message: str

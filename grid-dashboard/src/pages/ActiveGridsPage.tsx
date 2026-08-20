@@ -3,22 +3,26 @@ import { Card } from '../components/common/Card';
 import { Table } from '../components/common/Table';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { GridDetailModal } from '../components/common/GridDetailModal';
+import { CreateGridModal } from '../components/common/CreateGridModal';
 import { formatInr } from '../utils/formatters';
 import type { TableColumn, GridResponse, StatusType } from '../types/dashboard';
 import type { DashboardData } from '../hooks/useDashboardData';
-import { Eye } from 'lucide-react';
+import { Eye, Plus } from 'lucide-react';
 
 interface ActiveGridsPageProps {
   data: DashboardData;
   loading: boolean;
+  onRefresh?: () => void;
 }
 
 export const ActiveGridsPage: React.FC<ActiveGridsPageProps> = ({
   data,
   loading,
+  onRefresh,
 }) => {
   const { grids } = data;
   const [selectedGrid, setSelectedGrid] = useState<GridResponse | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
   const columns: TableColumn<GridResponse>[] = [
     {
@@ -119,17 +123,17 @@ export const ActiveGridsPage: React.FC<ActiveGridsPageProps> = ({
     },
     {
       key: 'actions',
-      header: 'Inspect',
+      header: 'Actions',
       align: 'center',
       render: (grid) => (
         <button
           className="action-btn"
           onClick={() => setSelectedGrid(grid)}
-          title="Inspect Read-Only Grid Details"
+          title="Inspect & Manage Grid"
           style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem' }}
         >
           <Eye size={12} />
-          <span>View</span>
+          <span>Manage</span>
         </button>
       ),
     },
@@ -145,9 +149,24 @@ export const ActiveGridsPage: React.FC<ActiveGridsPageProps> = ({
               Manage multi-level buy/sell grid triggers per coin
             </span>
           </div>
-          <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-            Total Grids: {grids.length}
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <button
+              className="action-btn"
+              onClick={() => setShowCreateModal(true)}
+              style={{
+                backgroundColor: 'var(--accent-cyan)',
+                color: '#000',
+                fontWeight: 700,
+                borderColor: 'var(--accent-cyan)',
+              }}
+            >
+              <Plus size={14} />
+              <span>New Grid</span>
+            </button>
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+              Total Grids: {grids.length}
+            </span>
+          </div>
         </div>
 
         <Table<GridResponse>
@@ -162,10 +181,16 @@ export const ActiveGridsPage: React.FC<ActiveGridsPageProps> = ({
         />
       </Card>
 
-      {/* Read-Only Grid Detail Modal */}
       <GridDetailModal
         grid={selectedGrid}
         onClose={() => setSelectedGrid(null)}
+        onRefresh={onRefresh}
+      />
+
+      <CreateGridModal
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onSuccess={() => onRefresh?.()}
       />
     </div>
   );

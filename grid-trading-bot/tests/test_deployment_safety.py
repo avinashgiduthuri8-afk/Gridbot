@@ -160,9 +160,9 @@ def test_production_settings_validation(monkeypatch):
 
 
 # 2. Required environment variables enforcement
-def test_missing_telegram_chat_id_raises(monkeypatch):
-    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
-    with pytest.raises(ConfigError, match="TELEGRAM_CHAT_ID"):
+def test_missing_coindcx_api_key_raises(monkeypatch):
+    monkeypatch.delenv("COINDCX_API_KEY", raising=False)
+    with pytest.raises(ConfigError, match="COINDCX_API_KEY"):
         load_settings()
 
 
@@ -182,8 +182,8 @@ def test_no_hardcoded_secrets_in_settings(monkeypatch):
     assert os.getenv("COINDCX_API_SECRET") is None
 
 
-# 5. Railway startup entrypoint validation
-def test_railway_entrypoint_exists():
+# 5. Production startup entrypoint validation
+def test_production_entrypoint_exists():
     from main import main, async_main
     assert callable(main)
     assert callable(async_main)

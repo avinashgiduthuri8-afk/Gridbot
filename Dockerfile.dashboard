@@ -1,33 +1,15 @@
-# Dashboard service Dockerfile — separate from grid-trading-bot/Dockerfile
-# (which runs the Telegram trading bot). This builds the React frontend
-# (artifacts/grid-dashboard) and serves it, together with the read-only
-# FastAPI dashboard API (grid-trading-bot/dashboard/app.py), from a single
-# process/origin/port — the simplest thing Railway can run as one service.
-#
-# Build context MUST be the repo root (not grid-trading-bot/), because the
-# frontend is a pnpm workspace package that depends on the sibling
-# lib/api-client-react and lib/api-zod packages living outside
-# grid-trading-bot/. On Railway: set this service's Root Directory to the
-# repo root and its Dockerfile Path to Dockerfile.dashboard.
-#
-# NOTE: pnpm-lock.yaml is currently out of sync with the root package.json
-# (two deps — diff, isomorphic-git — aren't reflected in the lockfile), so
-# this build uses --no-frozen-lockfile rather than failing outright. Worth
-# running `pnpm install` locally and committing the regenerated lockfile to
-# make frontend builds fully reproducible again.
+# Standalone Dashboard service Dockerfile for VPS / Docker deployment:
+# Builds the React frontend and serves it together with the FastAPI backend.
 
-# ---- Stage 1: build the frontend ----
+# ---- Stage 1: build the React frontend ----
 FROM node:20-slim AS frontend-builder
 
-RUN corepack enable && corepack prepare pnpm@9 --activate
+WORKDIR /workspace/grid-dashboard
+COPY grid-dashboard/package.json ./
+RUN npm install
 
-WORKDIR /workspace
-COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
-COPY lib ./lib
-COPY artifacts/grid-dashboard ./artifacts/grid-dashboard
-
-RUN pnpm install --no-frozen-lockfile
-RUN pnpm --filter @workspace/grid-dashboard run build
+COPY grid-dashboard/ ./
+RUN npm run build
 
 # ---- Stage 2: Python backend serving the built frontend ----
 FROM python:3.12-slim
@@ -42,15 +24,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY grid-trading-bot/ .
 
-# Frontend build output lands exactly where dashboard/config.py's
-# DASHBOARD_STATIC_DIR default ("dashboard/static") expects it.
-COPY --from=frontend-builder /workspace/artifacts/grid-dashboard/dist ./dashboard/static
+# Frontend build output lands at dashboard/static
+COPY --from=frontend-builder /workspace/grid-dashboard/dist ./dashboard/static
 
 RUN mkdir -p data logs \
     && useradd --create-home --uid 1000 dashboarduser \
     && chown -R dashboarduser:dashboarduser /app
 USER dashboarduser
 
-# Railway assigns $PORT at deploy time; dashboard/config.py already reads
-# it (falling back to DASHBOARD_PORT, then 8000, for non-Railway runs).
-CMD ["sh", "-c", "uvicorn dashboard.app:app --host 0.0.0.0 --port ${PORT:-8000}"]
+EXPOSE 8000
+
+CMD ["sh", "-c", "uvicorn dashboard.app:app --host 0.0.0.0 --port ${DASHBOARD_PORT:-8000}"]

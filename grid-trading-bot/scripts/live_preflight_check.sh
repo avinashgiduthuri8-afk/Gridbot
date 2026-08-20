@@ -164,7 +164,7 @@ echo "      [ ] CoinDCX API key permissions checked (trade only, NOT withdrawal)
 echo "      [ ] Starting with a small real amount (e.g. ₹500-1000), not full capital"
 echo "      [ ] You are watching Telegram + logs live for the first hour, not walking away"
 echo "      [ ] You know the /emergencystop command and have tested it once in paper mode"
-echo "      [ ] Railway service is on a persistent volume, not ephemeral storage"
+echo "      [ ] VPS/Docker service is on a persistent volume, not ephemeral storage"
 
 echo ""
 echo "=================================================="

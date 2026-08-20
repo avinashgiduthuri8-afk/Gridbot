@@ -1,0 +1,15 @@
+services:
+  gridbot:
+    build:
+      context: .
+      dockerfile: Dockerfile.combined
+    container_name: dca-gridbot
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persistent bind mounts for SQLite database and application logs
+      - ./data:/app/data
+      - ./logs:/app/logs

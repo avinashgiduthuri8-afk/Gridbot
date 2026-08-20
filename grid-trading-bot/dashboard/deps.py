@@ -1,27 +1,43 @@
 """Shared FastAPI dependencies.
 
-Every endpoint depends on get_repos() (and, where needed, get_app_settings())
-rather than constructing its own Database/Repositories — both are created
-exactly once, at application startup (see dashboard/app.py's lifespan),
-and reused for the lifetime of the process. This is the "shared
-application context" the dashboard uses instead of opening a new database
-connection per request.
+Every endpoint depends on get_repos(), get_dca_manager(), or get_risk_manager()
+rather than constructing its own Database/Repositories.
 """
 from __future__ import annotations
 
 from fastapi import Request, HTTPException, status
 
-from config.settings import Settings
 from storage.repositories import Repositories
 
 
 async def get_repos(request: Request) -> Repositories:
-    if not hasattr(request.app.state, "repos") or request.app.state.repos is None:
+    repos = getattr(request.app.state, "repos", None)
+    if repos is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database unavailable or unmigrated"
+            detail="Database unavailable or unmigrated",
         )
-    return request.app.state.repos
+    return repos
+
+
+async def get_dca_manager(request: Request):
+    dca_manager = getattr(request.app.state, "dca_manager", None)
+    if dca_manager is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Trading engine / DCA manager is unavailable",
+        )
+    return dca_manager
+
+
+async def get_risk_manager(request: Request):
+    risk_manager = getattr(request.app.state, "risk_manager", None)
+    if risk_manager is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Risk manager is unavailable",
+        )
+    return risk_manager
 
 
 async def get_app_settings(request: Request):
@@ -31,11 +47,7 @@ async def get_app_settings(request: Request):
 
 
 def parse_price_overrides(prices: str | None) -> dict[str, float]:
-    """Parses an optional "SYMBOL:price,SYMBOL:price" query param into a
-    dict, used by both /positions and /portfolio. This phase has no live
-    price feed (PriceMonitor integration is out of scope), so unrealized
-    P&L is 0.0 / current_price is null for any symbol not explicitly
-    supplied here — never a fabricated number."""
+    """Parses an optional 'SYMBOL:price,SYMBOL:price' query param into a dict."""
     if not prices:
         return {}
     result: dict[str, float] = {}
@@ -47,5 +59,5 @@ def parse_price_overrides(prices: str | None) -> dict[str, float]:
         try:
             result[symbol.strip().upper()] = float(value.strip())
         except ValueError:
-            continue  # silently skip a malformed entry rather than fail the whole request
+            continue
     return result

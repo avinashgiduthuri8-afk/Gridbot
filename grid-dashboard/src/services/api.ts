@@ -8,6 +8,11 @@ import type {
   PortfolioResponse,
   AnalyticsResponse,
   SettingsResponse,
+  CreateGridRequest,
+  CreateGridResponse,
+  ManualTradeResponse,
+  GridActionResponse,
+  EmergencyStopResponse,
 } from '../types/dashboard';
 
 const API_BASE_URL =
@@ -66,6 +71,45 @@ export const api = {
   getGrids: () => fetchApi<GridListResponse>('/grids'),
 
   getGrid: (gridId: string) => fetchApi<GridResponse>(`/grids/${encodeURIComponent(gridId)}`),
+
+  createGrid: (data: CreateGridRequest) =>
+    fetchApi<CreateGridResponse>('/grids', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  manualBuy: (gridId: string, inrAmount: number) =>
+    fetchApi<ManualTradeResponse>(`/grids/${encodeURIComponent(gridId)}/manual-buy`, {
+      method: 'POST',
+      body: JSON.stringify({ inr_amount: inrAmount }),
+    }),
+
+  manualSell: (gridId: string, inrAmount?: number | null) =>
+    fetchApi<ManualTradeResponse>(`/grids/${encodeURIComponent(gridId)}/manual-sell`, {
+      method: 'POST',
+      body: JSON.stringify({ inr_amount: inrAmount ?? null }),
+    }),
+
+  pauseGrid: (gridId: string) =>
+    fetchApi<GridActionResponse>(`/grids/${encodeURIComponent(gridId)}/pause`, {
+      method: 'POST',
+    }),
+
+  resumeGrid: (gridId: string) =>
+    fetchApi<GridActionResponse>(`/grids/${encodeURIComponent(gridId)}/resume`, {
+      method: 'POST',
+    }),
+
+  stopGrid: (gridId: string) =>
+    fetchApi<GridActionResponse>(`/grids/${encodeURIComponent(gridId)}/stop`, {
+      method: 'POST',
+    }),
+
+  setEmergencyStop: (enabled: boolean) =>
+    fetchApi<EmergencyStopResponse>('/emergency-stop', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    }),
 
   getPositions: (prices?: string) => {
     const query = prices ? `?prices=${encodeURIComponent(prices)}` : '';

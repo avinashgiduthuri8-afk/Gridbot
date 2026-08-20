@@ -13,7 +13,6 @@ import type { NavigationTab } from './types/dashboard';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<NavigationTab>('overview');
-
   const { data, loading, error, lastUpdated, refetch } = useDashboardData(15000);
 
   const renderActivePage = () => {
@@ -23,12 +22,12 @@ export function App() {
           <OverviewPage
             data={data}
             loading={loading}
-            error={error}
+            onNavigate={setActiveTab}
             onRefresh={refetch}
           />
         );
       case 'active-grids':
-        return <ActiveGridsPage data={data} loading={loading} />;
+        return <ActiveGridsPage data={data} loading={loading} onRefresh={refetch} />;
       case 'positions':
         return <PositionsPage data={data} loading={loading} />;
       case 'orders':
@@ -46,7 +45,7 @@ export function App() {
           <OverviewPage
             data={data}
             loading={loading}
-            error={error}
+            onNavigate={setActiveTab}
             onRefresh={refetch}
           />
         );
@@ -60,8 +59,14 @@ export function App() {
       health={data.health}
       loading={loading}
       lastUpdated={lastUpdated}
+      emergencyStopActive={data.settings?.emergency_stop_active ?? false}
       onRefresh={refetch}
     >
+      {error && (
+        <div className="error-banner">
+          <strong>System Notice:</strong> {error}
+        </div>
+      )}
       {renderActivePage()}
     </DashboardLayout>
   );

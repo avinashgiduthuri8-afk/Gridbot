@@ -1,14 +1,6 @@
-"""FastAPI application factory for the read-only Grid Bot dashboard.
+"""FastAPI application factory for the Grid Bot dashboard.
 
-This process is additive and independent of main.py's Telegram bot
-process — it reads the SAME SQLite database (via the exact same
-Database/Repositories classes the bot itself uses) but never calls into
-DCAManager, OrderManager, PriceMonitor, OrderMonitor, or RiskManager, and
-never writes to the database. Run it with:
-
-    uvicorn dashboard.app:app --host 0.0.0.0 --port 8000
-
-or `python -m dashboard.app` for a plain dev-server run.
+Supports both embedded execution inside main.py and standalone deployment.
 """
 from __future__ import annotations
 
@@ -37,21 +29,60 @@ async def lifespan(app: FastAPI):
     app.state.dashboard_settings = dashboard_settings
     app.state.settings = dashboard_settings
 
-    db = Database(dashboard_settings.database_path, read_only=True)
-    try:
-        await db.connect()
-        app.state.db = db
-        app.state.repos = Repositories(db)
-    except FileNotFoundError:
-        log.warning("Database not found. Dashboard will return 503 until bot creates it.")
-        app.state.db = None
-        app.state.repos = None
+    if not hasattr(app.state, "db") or app.state.db is None:
+        db = Database(dashboard_settings.database_path)
+        try:
+            await db.connect()
+            await db.migrate()
+            app.state.db = db
+            app.state.repos = Repositories(db)
+        except Exception as exc:
+            log.warning("Database initialization in dashboard: %s", exc)
+            app.state.db = None
+            app.state.repos = None
 
-    log.info("Dashboard started read-only against database %s", dashboard_settings.database_path)
+    if app.state.repos is not None and (not hasattr(app.state, "dca_manager") or app.state.dca_manager is None):
+        try:
+            from config.settings import load_settings
+            from exchange.coindcx import CoinDCXClient
+            from exchange.paper_exchange import PaperExchangeClient
+            from notifications.notifier import Notifier
+            from risk.risk_manager import RiskManager
+            from trading.dca_manager import DCAManager
+            from trading.mixed_order_manager import MixedOrderManager
+            from trading.order_manager import OrderManager
+
+            bot_settings = load_settings()
+            exchange = CoinDCXClient(
+                api_key=bot_settings.coindcx_api_key,
+                api_secret=bot_settings.coindcx_api_secret,
+                base_url=bot_settings.coindcx_base_url,
+            )
+            paper_exchange = PaperExchangeClient(exchange)
+            risk_mgr = RiskManager(bot_settings.risk, app.state.repos)
+            await risk_mgr.load_emergency_stop()
+            real_om = OrderManager(exchange, app.state.repos)
+            paper_om = OrderManager(paper_exchange, app.state.repos)
+            mixed_om = MixedOrderManager(real=real_om, paper=paper_om, repos=app.state.repos)
+            notifier = Notifier(bot=None, chat_ids=())
+            dca_mgr = DCAManager(
+                exchange=exchange,
+                repos=app.state.repos,
+                order_manager=mixed_om,
+                notifier=notifier,
+                risk=risk_mgr,
+            )
+            app.state.exchange = exchange
+            app.state.risk_manager = risk_mgr
+            app.state.dca_manager = dca_mgr
+        except Exception as exc:
+            log.info("Running dashboard in read-only / unconfigured exchange mode: %s", exc)
+
+    log.info("Dashboard started on %s:%d against database %s", dashboard_settings.host, dashboard_settings.port, dashboard_settings.database_path)
     try:
         yield
     finally:
-        if app.state.db:
+        if hasattr(app.state, "db") and app.state.db:
             await app.state.db.close()
         log.info("Dashboard shut down.")
 
@@ -59,12 +90,8 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Grid Bot Dashboard API",
-        description=(
-            "Read-only API over the Grid Bot's trading data. Reuses the "
-            "existing repository layer and trading.portfolio_metrics — no "
-            "trading logic, and no write operations, live in this phase."
-        ),
-        version="0.1.0",
+        description="REST API for Grid Bot dashboard monitoring and manual trade execution.",
+        version="0.2.0",
         lifespan=lifespan,
     )
 
@@ -79,7 +106,6 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(sqlite3.OperationalError)
     async def sqlite_operational_exception_handler(request: Request, exc: sqlite3.OperationalError):
-        # Missing tables (empty/unmigrated DB) or broken DB
         return JSONResponse(
             status_code=503,
             content={"detail": "Database unavailable or unmigrated"},
@@ -88,16 +114,6 @@ def create_app() -> FastAPI:
     for router_module in (health, grids, positions, orders, trade_history, portfolio, analytics, settings):
         app.include_router(router_module.router, prefix="/api")
 
-    # Optionally serve a pre-built frontend (`vite build` output) from the
-    # same process/origin as the API. This is entirely additive: if
-    # static_dir is unset or the directory doesn't exist (the default when
-    # running the API alone, e.g. in tests), nothing changes below and the
-    # app stays API-only. When present, requests to /assets/* (Vite's
-    # hashed JS/CSS bundle) are served directly, and any other non-/api
-    # path falls back to index.html so the React app's client-side router
-    # (not this backend) decides what to render — the same pattern any
-    # SPA host uses. This must be registered last so it never shadows the
-    # /api/* routers above.
     static_dir = dashboard_settings.static_dir
     index_path = Path(static_dir) / "index.html" if static_dir else None
     if index_path and index_path.is_file():
@@ -106,7 +122,7 @@ def create_app() -> FastAPI:
             app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="dashboard-assets")
 
         @app.get("/{full_path:path}", include_in_schema=False)
-        async def serve_spa(full_path: str):  # noqa: ARG001 — path unused, always serves index.html
+        async def serve_spa(full_path: str):
             return FileResponse(str(index_path))
 
         log.info("Serving built frontend from %s", static_dir)

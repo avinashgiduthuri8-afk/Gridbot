@@ -17,6 +17,7 @@ export type StatusType =
   | 'warning'
   | 'paper'
   | 'live'
+  | 'real'
   | 'filled'
   | 'open'
   | 'cancelled'
@@ -49,7 +50,6 @@ export interface TableProps<T> {
 
 /* ==========================================================================
    Backend API Response Schemas
-   Matches FastAPI Pydantic models in grid-trading-bot/schemas/
    ========================================================================== */
 
 export interface HealthResponse {
@@ -89,6 +89,66 @@ export interface GridResponse {
 export interface GridListResponse {
   grids: GridResponse[];
   count: number;
+}
+
+export interface CreateGridRequest {
+  symbol: string;
+  entry_price?: number;
+  base_investment: number;
+  dip_buy_amount: number;
+  dip_percentage: number;
+  profit_sell_amount: number;
+  profit_percentage: number;
+  max_levels: number;
+  stop_loss_percentage: number;
+  mode?: 'paper' | 'real';
+  trailing_enabled?: boolean;
+  trailing_percentage?: number | null;
+}
+
+export interface CreateGridResponse {
+  grid_id: string;
+  symbol: string;
+  mode: string;
+  status: string;
+  message: string;
+}
+
+export interface ManualBuyRequest {
+  inr_amount: number;
+}
+
+export interface ManualSellRequest {
+  inr_amount?: number | null;
+}
+
+export interface ManualTradeResponse {
+  success: boolean;
+  grid_id: string;
+  symbol: string;
+  side: string;
+  quantity: number;
+  price: number;
+  inr_amount: number;
+  mode: string;
+  order_id?: string | null;
+  message: string;
+}
+
+export interface GridActionResponse {
+  success: boolean;
+  grid_id: string;
+  action: string;
+  message: string;
+}
+
+export interface EmergencyStopRequest {
+  enabled: boolean;
+}
+
+export interface EmergencyStopResponse {
+  emergency_stop: boolean;
+  message: string;
 }
 
 export interface PositionResponse {
