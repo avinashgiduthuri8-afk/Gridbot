@@ -1,17 +1,25 @@
 import React, { useState } from 'react';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
-import type { NavigationTab } from '../../types/dashboard';
+import type { NavigationTab, HealthResponse } from '../../types/dashboard';
 
 interface DashboardLayoutProps {
   activeTab: NavigationTab;
   onTabChange: (tab: NavigationTab) => void;
+  health: HealthResponse | null;
+  loading: boolean;
+  lastUpdated: Date | null;
+  onRefresh: () => void;
   children: React.ReactNode;
 }
 
 export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   activeTab,
   onTabChange,
+  health,
+  loading,
+  lastUpdated,
+  onRefresh,
   children,
 }) => {
   const [collapsed, setCollapsed] = useState(false);
@@ -25,7 +33,13 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
         onToggleCollapse={() => setCollapsed(!collapsed)}
       />
       <div className="main-content">
-        <Header activeTab={activeTab} />
+        <Header
+          activeTab={activeTab}
+          health={health}
+          loading={loading}
+          lastUpdated={lastUpdated}
+          onRefresh={onRefresh}
+        />
         <main className="page-container">{children}</main>
       </div>
     </div>

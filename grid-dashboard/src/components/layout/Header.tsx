@@ -1,10 +1,14 @@
 import React from 'react';
 import { StatusBadge } from '../common/StatusBadge';
 import { RefreshCw, Radio, Bell } from 'lucide-react';
-import type { NavigationTab } from '../../types/dashboard';
+import type { NavigationTab, HealthResponse } from '../../types/dashboard';
 
 interface HeaderProps {
   activeTab: NavigationTab;
+  health: HealthResponse | null;
+  loading: boolean;
+  lastUpdated: Date | null;
+  onRefresh: () => void;
 }
 
 const TAB_TITLES: Record<NavigationTab, string> = {
@@ -18,7 +22,15 @@ const TAB_TITLES: Record<NavigationTab, string> = {
   settings: 'System Configuration',
 };
 
-export const Header: React.FC<HeaderProps> = ({ activeTab }) => {
+export const Header: React.FC<HeaderProps> = ({
+  activeTab,
+  health,
+  loading,
+  lastUpdated,
+  onRefresh,
+}) => {
+  const isHealthy = health?.status === 'ok' && health?.database_connected;
+
   return (
     <header className="header">
       <div className="header-title-section">
@@ -27,14 +39,27 @@ export const Header: React.FC<HeaderProps> = ({ activeTab }) => {
       </div>
 
       <div className="header-actions">
-        <button className="action-btn" title="Refresh Data">
-          <RefreshCw size={14} />
-          <span>Refresh</span>
+        {lastUpdated && (
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-dark)' }}>
+            Updated: {lastUpdated.toLocaleTimeString()}
+          </span>
+        )}
+
+        <button
+          className="action-btn"
+          onClick={onRefresh}
+          disabled={loading}
+          title="Refresh Data"
+        >
+          <RefreshCw size={14} className={loading ? 'spin' : ''} />
+          <span>{loading ? 'Refreshing...' : 'Refresh'}</span>
         </button>
-        <button className="action-btn" title="System Connection Status">
-          <Radio size={14} color="#10b981" />
-          <span>Backend Ready</span>
+
+        <button className="action-btn" title="Backend Server Status">
+          <Radio size={14} color={isHealthy ? '#10b981' : '#ef4444'} />
+          <span>{isHealthy ? 'Backend Connected' : 'Disconnected'}</span>
         </button>
+
         <button className="action-btn" title="Notifications">
           <Bell size={14} />
         </button>
