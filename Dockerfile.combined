@@ -6,11 +6,18 @@
 # ---- Stage 1: build the React frontend ----
 FROM node:20-slim AS frontend-builder
 
-WORKDIR /workspace/grid-dashboard
-COPY grid-dashboard/package.json ./
-RUN npm install
+WORKDIR /app/grid-dashboard
 
+# Copy package manifests first for optimal layer caching
+COPY grid-dashboard/package.json grid-dashboard/package-lock.json* ./
+
+# Install dependencies using package-lock.json if available
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+# Copy frontend source code (node_modules is excluded via .dockerignore)
 COPY grid-dashboard/ ./
+
+# Build the production bundle into /app/grid-dashboard/dist
 RUN npm run build
 
 # ---- Stage 2: Python bot + embedded dashboard ----
@@ -31,7 +38,7 @@ RUN pip install --no-cache-dir google-auth==2.35.0
 COPY grid-trading-bot/ .
 
 # Frontend build output lands at dashboard/static where dashboard/config.py expects it
-COPY --from=frontend-builder /workspace/grid-dashboard/dist ./dashboard/static
+COPY --from=frontend-builder /app/grid-dashboard/dist ./dashboard/static
 
 RUN mkdir -p data logs \
     && useradd --create-home --uid 1000 botuser \

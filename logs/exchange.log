@@ -1,0 +1,19 @@
+2026-08-20 11:18:37 | INFO     | grid_bot.exchange | coindcx:309 | Loaded market details for 997 symbols
+2026-08-20 11:18:37 | INFO     | grid_bot.exchange | paper_exchange:191 | [PAPER] Order PAPER_000001: buy BTCINR qty=0.00120000 decision=₹7078485.0000 fill=₹7080964.1010 (slippage 0.0350%) latency=2.77s
+2026-08-20 11:18:37 | INFO     | grid_bot.exchange | paper_exchange:191 | [PAPER] Order PAPER_000002: buy BTCINR qty=0.00084000 decision=₹7078485.0000 fill=₹7079946.1642 (slippage 0.0206%) latency=3.73s
+2026-08-20 11:18:42 | ERROR    | grid_bot.exchange | coindcx:151 | Auth rejected on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:18:42 | ERROR    | grid_bot.exchange | coindcx:151 | Auth rejected on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:11 | INFO     | grid_bot.exchange | paper_exchange:191 | [PAPER] Order PAPER_000003: buy BTCINR qty=0.00120000 decision=₹7086005.4000 fill=₹7086043.1848 (slippage 0.0005%) latency=1.71s
+2026-08-20 11:19:11 | INFO     | grid_bot.exchange | paper_exchange:191 | [PAPER] Order PAPER_000004: buy BTCINR qty=0.00084000 decision=₹7086005.4000 fill=₹7089742.1650 (slippage 0.0527%) latency=2.87s
+2026-08-20 11:19:14 | ERROR    | grid_bot.exchange | coindcx:151 | Auth rejected on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:14 | ERROR    | grid_bot.exchange | coindcx:151 | Auth rejected on /exchange/v1/orders/active_orders: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:15 | INFO     | grid_bot.exchange | paper_exchange:191 | [PAPER] Order PAPER_000005: sell BTCINR qty=0.00084000 decision=₹7086005.4000 fill=₹7081578.0808 (slippage -0.0625%) latency=1.41s
+2026-08-20 11:19:22 | ERROR    | grid_bot.exchange | coindcx:151 | Auth rejected on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:22 | ERROR    | grid_bot.exchange | coindcx:151 | Auth rejected on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:28 | INFO     | grid_bot.exchange | paper_exchange:191 | [PAPER] Order PAPER_000006: buy BTCINR qty=0.00120000 decision=₹7084487.8000 fill=₹7089925.7682 (slippage 0.0768%) latency=1.88s
+2026-08-20 11:19:28 | INFO     | grid_bot.exchange | paper_exchange:191 | [PAPER] Order PAPER_000007: buy BTCINR qty=0.00084000 decision=₹7084487.8000 fill=₹7084889.5294 (slippage 0.0057%) latency=2.98s
+2026-08-20 11:19:31 | ERROR    | grid_bot.exchange | coindcx:151 | Auth rejected on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:33 | INFO     | grid_bot.exchange | paper_exchange:191 | [PAPER] Order PAPER_000008: sell BTCINR qty=0.00084000 decision=₹7084487.8000 fill=₹7080382.8748 (slippage -0.0579%) latency=2.00s
+2026-08-20 11:19:39 | ERROR    | grid_bot.exchange | coindcx:151 | Auth rejected on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:39 | ERROR    | grid_bot.exchange | coindcx:151 | Auth rejected on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:41 | INFO     | grid_bot.exchange | paper_exchange:191 | [PAPER] Order PAPER_000009: sell BTCINR qty=0.00120000 decision=₹7081654.0000 fill=₹7077008.5750 (slippage -0.0656%) latency=1.25s

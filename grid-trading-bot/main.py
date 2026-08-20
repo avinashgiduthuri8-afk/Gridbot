@@ -383,25 +383,28 @@ async def async_main() -> None:
         except NotImplementedError:
             pass
 
-    async with application:
-        await application.initialize()
-        await application.start()
-        await application.updater.start_polling(drop_pending_updates=True)
-        log.info("Telegram bot polling started. Bot is live.")
-
+    if application is not None:
+        async with application:
+            await application.initialize()
+            await application.start()
+            await application.updater.start_polling(drop_pending_updates=True)
+            log.info("Telegram bot polling started. Bot is live.")
+            await stop_event.wait()
+            log.info("Shutting down...")
+            try:
+                await notifier.send(
+                    "🛑 <b>Bot is shutting down.</b>\n"
+                    "No new trades will be placed until it restarts.\n"
+                    "Active grids are preserved — recovery will resume them on next start."
+                )
+            except Exception:
+                log.warning("Could not send shutdown notification")
+            await application.updater.stop()
+            await application.stop()
+    else:
+        log.info("Running in headless / Web Dashboard mode (Telegram bot disabled).")
         await stop_event.wait()
-
         log.info("Shutting down...")
-        try:
-            await notifier.send(
-                "🔌 <b>Bot is shutting down.</b>\n"
-                "No new trades will be placed until it restarts.\n"
-                "Active grids are preserved — recovery will resume them on next start."
-            )
-        except Exception:  # noqa: BLE001
-            log.warning("Could not send shutdown notification")
-        await application.updater.stop()
-        await application.stop()
 
     background_tasks = [daily_summary_task, alert_task]
     if drive_backup_task is not None:

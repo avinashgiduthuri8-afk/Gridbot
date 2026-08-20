@@ -4,11 +4,14 @@
 # ---- Stage 1: build the React frontend ----
 FROM node:20-slim AS frontend-builder
 
-WORKDIR /workspace/grid-dashboard
-COPY grid-dashboard/package.json ./
-RUN npm install
+WORKDIR /app/grid-dashboard
+
+COPY grid-dashboard/package.json grid-dashboard/package-lock.json* ./
+
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 COPY grid-dashboard/ ./
+
 RUN npm run build
 
 # ---- Stage 2: Python backend serving the built frontend ----
@@ -25,7 +28,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY grid-trading-bot/ .
 
 # Frontend build output lands at dashboard/static
-COPY --from=frontend-builder /workspace/grid-dashboard/dist ./dashboard/static
+COPY --from=frontend-builder /app/grid-dashboard/dist ./dashboard/static
 
 RUN mkdir -p data logs \
     && useradd --create-home --uid 1000 dashboarduser \

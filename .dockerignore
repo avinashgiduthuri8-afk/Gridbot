@@ -1,0 +1,35 @@
+# Dependency directories
+**/node_modules
+**/.venv
+**/venv
+
+# Build outputs
+**/dist
+**/build
+**/.turbo
+
+# Python bytecode and caches
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache
+**/.coverage
+**/htmlcov
+
+# Version control and IDE
+.git
+.github
+.agents
+.gemini
+.idea
+.vscode
+
+# Runtime data & logs
+data/
+logs/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.log

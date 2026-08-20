@@ -1,0 +1,35 @@
+2026-08-20 11:14:29 | WARNING  | grid_bot.database | database:270 | No pre-existing database file was found at /app/data/grid_bot.db — a brand-new, empty database was just created. If you expected existing grids/history to be here, this likely means DATABASE_PATH or the mounted volume does not point at the same location as the previous deployment.
+2026-08-20 11:18:27 | CRITICAL | grid_bot.trading | risk_manager:55 | EMERGENCY STOP triggered. All new trading actions are blocked.
+2026-08-20 11:18:27 | WARNING  | grid_bot.trading | risk_manager:60 | Emergency stop cleared. Trading actions re-enabled.
+2026-08-20 11:18:37 | CRITICAL | grid_bot.trading | risk_manager:55 | EMERGENCY STOP triggered. All new trading actions are blocked.
+2026-08-20 11:18:37 | WARNING  | grid_bot.trading | risk_manager:60 | Emergency stop cleared. Trading actions re-enabled.
+2026-08-20 11:18:37 | CRITICAL | grid_bot.trading | risk_manager:55 | EMERGENCY STOP triggered. All new trading actions are blocked.
+2026-08-20 11:18:37 | WARNING  | grid_bot.trading | risk_manager:60 | Emergency stop cleared. Trading actions re-enabled.
+2026-08-20 11:18:42 | ERROR    | grid_bot.exchange | coindcx:151 | Auth rejected on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:18:42 | WARNING  | grid_bot.trading | dca_manager:863 | Could not resolve fee for order ord_1787224717651_36b5fc via trade history: CoinDCX rejected credentials on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:18:42 | ERROR    | grid_bot.exchange | coindcx:151 | Auth rejected on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:18:42 | WARNING  | grid_bot.trading | dca_manager:863 | Could not resolve fee for order ord_1787224717786_7d287d via trade history: CoinDCX rejected credentials on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:18:59 | CRITICAL | grid_bot.trading | risk_manager:55 | EMERGENCY STOP triggered. All new trading actions are blocked.
+2026-08-20 11:18:59 | WARNING  | grid_bot.trading | risk_manager:60 | Emergency stop cleared. Trading actions re-enabled.
+2026-08-20 11:19:11 | CRITICAL | grid_bot.trading | risk_manager:55 | EMERGENCY STOP triggered. All new trading actions are blocked.
+2026-08-20 11:19:11 | WARNING  | grid_bot.trading | risk_manager:60 | Emergency stop cleared. Trading actions re-enabled.
+2026-08-20 11:19:11 | CRITICAL | grid_bot.trading | risk_manager:55 | EMERGENCY STOP triggered. All new trading actions are blocked.
+2026-08-20 11:19:11 | WARNING  | grid_bot.trading | risk_manager:60 | Emergency stop cleared. Trading actions re-enabled.
+2026-08-20 11:19:14 | ERROR    | grid_bot.exchange | coindcx:151 | Auth rejected on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:14 | WARNING  | grid_bot.trading | dca_manager:863 | Could not resolve fee for order ord_1787224751640_6e22ca via trade history: CoinDCX rejected credentials on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:14 | ERROR    | grid_bot.exchange | coindcx:151 | Auth rejected on /exchange/v1/orders/active_orders: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:14 | WARNING  | grid_bot.trading | order_monitor:281 | Exchange sync: get_open_orders(BTCINR) failed: CoinDCX rejected credentials on /exchange/v1/orders/active_orders: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:22 | ERROR    | grid_bot.exchange | coindcx:151 | Auth rejected on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:22 | WARNING  | grid_bot.trading | dca_manager:863 | Could not resolve fee for order ord_1787224751808_283d26 via trade history: CoinDCX rejected credentials on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:22 | ERROR    | grid_bot.exchange | coindcx:151 | Auth rejected on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:22 | WARNING  | grid_bot.trading | dca_manager:863 | Could not resolve fee for order ord_1787224755937_050197 via trade history: CoinDCX rejected credentials on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:28 | CRITICAL | grid_bot.trading | risk_manager:55 | EMERGENCY STOP triggered. All new trading actions are blocked.
+2026-08-20 11:19:28 | WARNING  | grid_bot.trading | risk_manager:60 | Emergency stop cleared. Trading actions re-enabled.
+2026-08-20 11:19:28 | CRITICAL | grid_bot.trading | risk_manager:55 | EMERGENCY STOP triggered. All new trading actions are blocked.
+2026-08-20 11:19:28 | WARNING  | grid_bot.trading | risk_manager:60 | Emergency stop cleared. Trading actions re-enabled.
+2026-08-20 11:19:31 | ERROR    | grid_bot.exchange | coindcx:151 | Auth rejected on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:31 | WARNING  | grid_bot.trading | dca_manager:863 | Could not resolve fee for order ord_1787224768751_e83a63 via trade history: CoinDCX rejected credentials on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:39 | ERROR    | grid_bot.exchange | coindcx:151 | Auth rejected on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:39 | WARNING  | grid_bot.trading | dca_manager:863 | Could not resolve fee for order ord_1787224768870_59a9cd via trade history: CoinDCX rejected credentials on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:39 | ERROR    | grid_bot.exchange | coindcx:151 | Auth rejected on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:39 | WARNING  | grid_bot.trading | dca_manager:863 | Could not resolve fee for order ord_1787224773095_385f6a via trade history: CoinDCX rejected credentials on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}

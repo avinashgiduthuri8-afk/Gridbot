@@ -1,0 +1,126 @@
+2026-08-20 11:14:29 | INFO     | grid_bot.trading | main:167 | Starting Manual DCA Grid Trading Bot...
+2026-08-20 11:14:29 | INFO     | grid_bot.trading | main:195 | Telegram credentials not configured — running in dashboard/headless mode.
+2026-08-20 11:14:29 | INFO     | grid_bot.trading | alert_manager:61 | Loaded 0 price alert(s) from database
+2026-08-20 11:14:29 | INFO     | grid_bot.trading | price_monitor:115 | No persisted monitor interval found — using default: 5s
+2026-08-20 11:14:29 | INFO     | grid_bot.trading | recovery:57 | Starting recovery sequence...
+2026-08-20 11:14:29 | INFO     | grid_bot.trading | recovery:62 | Recovery: found 0 active/paused/stopping grid(s)
+2026-08-20 11:14:29 | INFO     | grid_bot.trading | recovery:78 | Recovery complete: grids=0 reconciled=0 fills=0 orphans=0
+2026-08-20 11:14:29 | INFO     | grid_bot.trading | order_monitor:67 | Order monitor started (poll=8s, full-sync every 10 cycles)
+2026-08-20 11:14:29 | INFO     | grid_bot.trading | price_monitor:150 | Price monitor started (interval=5s)
+2026-08-20 11:14:30 | INFO     | grid_bot.trading | app:128 | Serving built frontend from dashboard/static
+2026-08-20 11:14:30 | INFO     | grid_bot.trading | main:368 | Embedded dashboard enabled on 0.0.0.0:8000 (static_dir=dashboard/static)
+2026-08-20 11:15:21 | INFO     | grid_bot.trading | main:167 | Starting Manual DCA Grid Trading Bot...
+2026-08-20 11:15:21 | INFO     | grid_bot.trading | main:195 | Telegram credentials not configured — running in dashboard/headless mode.
+2026-08-20 11:15:21 | INFO     | grid_bot.trading | alert_manager:61 | Loaded 0 price alert(s) from database
+2026-08-20 11:15:21 | INFO     | grid_bot.trading | price_monitor:115 | No persisted monitor interval found — using default: 5s
+2026-08-20 11:15:21 | INFO     | grid_bot.trading | recovery:57 | Starting recovery sequence...
+2026-08-20 11:15:21 | INFO     | grid_bot.trading | recovery:62 | Recovery: found 0 active/paused/stopping grid(s)
+2026-08-20 11:15:21 | INFO     | grid_bot.trading | recovery:78 | Recovery complete: grids=0 reconciled=0 fills=0 orphans=0
+2026-08-20 11:15:21 | INFO     | grid_bot.trading | order_monitor:67 | Order monitor started (poll=8s, full-sync every 10 cycles)
+2026-08-20 11:15:21 | INFO     | grid_bot.trading | price_monitor:150 | Price monitor started (interval=5s)
+2026-08-20 11:15:22 | INFO     | grid_bot.trading | app:128 | Serving built frontend from dashboard/static
+2026-08-20 11:15:22 | INFO     | grid_bot.trading | main:368 | Embedded dashboard enabled on 0.0.0.0:8000 (static_dir=dashboard/static)
+2026-08-20 11:15:22 | INFO     | grid_bot.trading | main:405 | Running in headless / Web Dashboard mode (Telegram bot disabled).
+2026-08-20 11:15:22 | INFO     | grid_bot.trading | app:81 | Dashboard started on 0.0.0.0:8000 against database data/grid_bot.db
+2026-08-20 11:18:27 | CRITICAL | grid_bot.trading | risk_manager:55 | EMERGENCY STOP triggered. All new trading actions are blocked.
+2026-08-20 11:18:27 | WARNING  | grid_bot.trading | risk_manager:60 | Emergency stop cleared. Trading actions re-enabled.
+2026-08-20 11:18:37 | CRITICAL | grid_bot.trading | risk_manager:55 | EMERGENCY STOP triggered. All new trading actions are blocked.
+2026-08-20 11:18:37 | WARNING  | grid_bot.trading | risk_manager:60 | Emergency stop cleared. Trading actions re-enabled.
+2026-08-20 11:18:37 | INFO     | grid_bot.trading | dca_manager:264 | Created DCA grid grd_1787224717638_5efe2b for BTCINR (entry ₹5000000.00)
+2026-08-20 11:18:37 | INFO     | grid_bot.trading | order_manager:97 | order.pending  order=ord_1787224717651_36b5fc grid=grd_1787224717638_5efe2b symbol=BTCINR side=buy qty=0.00120000 price=5000000.0000 mode=paper
+2026-08-20 11:18:37 | INFO     | grid_bot.trading | order_manager:179 | order.open         order=ord_1787224717651_36b5fc grid=grd_1787224717638_5efe2b symbol=BTCINR side=buy exchange_id=PAPER_000001 qty=0.00120000 filled=0.00000000 mode=paper
+2026-08-20 11:18:37 | CRITICAL | grid_bot.trading | risk_manager:55 | EMERGENCY STOP triggered. All new trading actions are blocked.
+2026-08-20 11:18:37 | WARNING  | grid_bot.trading | risk_manager:60 | Emergency stop cleared. Trading actions re-enabled.
+2026-08-20 11:18:37 | INFO     | grid_bot.trading | order_manager:97 | order.pending  order=ord_1787224717786_7d287d grid=grd_1787224717638_5efe2b symbol=BTCINR side=buy qty=0.00084000 price=7078485.0000 mode=paper
+2026-08-20 11:18:37 | INFO     | grid_bot.trading | order_manager:179 | order.open         order=ord_1787224717786_7d287d grid=grd_1787224717638_5efe2b symbol=BTCINR side=buy exchange_id=PAPER_000002 qty=0.00084000 filled=0.00000000 mode=paper
+2026-08-20 11:18:37 | INFO     | grid_bot.trading | dca_manager:421 | Manual buy placed: grid=grd_1787224717638_5efe2b order=ord_1787224717786_7d287d qty=0.00084000 @ ₹7078485.00 mode=paper
+2026-08-20 11:18:42 | INFO     | grid_bot.trading | order_manager:329 | order.filled       order=ord_1787224717651_36b5fc grid=grd_1787224717638_5efe2b symbol=BTCINR side=buy exchange_id=PAPER_000001 filled=0.00120000 (was open)
+2026-08-20 11:18:42 | INFO     | grid_bot.trading | order_monitor:163 | order.filled   order=ord_1787224717651_36b5fc grid=grd_1787224717638_5efe2b symbol=BTCINR side=buy exchange_id=PAPER_000001 qty=0.00120000 @ ₹7080964.10
+2026-08-20 11:18:42 | WARNING  | grid_bot.trading | dca_manager:863 | Could not resolve fee for order ord_1787224717651_36b5fc via trade history: CoinDCX rejected credentials on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:18:42 | INFO     | grid_bot.trading | dca_manager:1263 | Buy filled grd_1787224717638_5efe2b: qty 0.00120000 @ ₹7080964.10 → avg ₹7080964.10 level 1
+2026-08-20 11:18:42 | INFO     | grid_bot.trading | order_manager:329 | order.filled       order=ord_1787224717786_7d287d grid=grd_1787224717638_5efe2b symbol=BTCINR side=buy exchange_id=PAPER_000002 filled=0.00084000 (was open)
+2026-08-20 11:18:42 | INFO     | grid_bot.trading | order_monitor:163 | order.filled   order=ord_1787224717786_7d287d grid=grd_1787224717638_5efe2b symbol=BTCINR side=buy exchange_id=PAPER_000002 qty=0.00084000 @ ₹7079946.16
+2026-08-20 11:18:42 | WARNING  | grid_bot.trading | dca_manager:863 | Could not resolve fee for order ord_1787224717786_7d287d via trade history: CoinDCX rejected credentials on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:18:42 | INFO     | grid_bot.trading | dca_manager:1263 | Buy filled grd_1787224717638_5efe2b: qty 0.00084000 @ ₹7079946.16 → avg ₹7080544.95 level 2
+2026-08-20 11:18:59 | CRITICAL | grid_bot.trading | risk_manager:55 | EMERGENCY STOP triggered. All new trading actions are blocked.
+2026-08-20 11:18:59 | WARNING  | grid_bot.trading | risk_manager:60 | Emergency stop cleared. Trading actions re-enabled.
+2026-08-20 11:19:11 | INFO     | grid_bot.trading | dca_manager:357 | Grid grd_1787224717638_5efe2b stopped (reason: manual_dashboard)
+2026-08-20 11:19:11 | CRITICAL | grid_bot.trading | risk_manager:55 | EMERGENCY STOP triggered. All new trading actions are blocked.
+2026-08-20 11:19:11 | WARNING  | grid_bot.trading | risk_manager:60 | Emergency stop cleared. Trading actions re-enabled.
+2026-08-20 11:19:11 | INFO     | grid_bot.trading | dca_manager:264 | Created DCA grid grd_1787224751627_64bf1b for BTCINR (entry ₹5000000.00)
+2026-08-20 11:19:11 | INFO     | grid_bot.trading | order_manager:97 | order.pending  order=ord_1787224751640_6e22ca grid=grd_1787224751627_64bf1b symbol=BTCINR side=buy qty=0.00120000 price=5000000.0000 mode=paper
+2026-08-20 11:19:11 | INFO     | grid_bot.trading | order_manager:179 | order.open         order=ord_1787224751640_6e22ca grid=grd_1787224751627_64bf1b symbol=BTCINR side=buy exchange_id=PAPER_000003 qty=0.00120000 filled=0.00000000 mode=paper
+2026-08-20 11:19:11 | CRITICAL | grid_bot.trading | risk_manager:55 | EMERGENCY STOP triggered. All new trading actions are blocked.
+2026-08-20 11:19:11 | WARNING  | grid_bot.trading | risk_manager:60 | Emergency stop cleared. Trading actions re-enabled.
+2026-08-20 11:19:11 | INFO     | grid_bot.trading | order_manager:97 | order.pending  order=ord_1787224751808_283d26 grid=grd_1787224751627_64bf1b symbol=BTCINR side=buy qty=0.00084000 price=7086005.4000 mode=paper
+2026-08-20 11:19:11 | INFO     | grid_bot.trading | order_manager:179 | order.open         order=ord_1787224751808_283d26 grid=grd_1787224751627_64bf1b symbol=BTCINR side=buy exchange_id=PAPER_000004 qty=0.00084000 filled=0.00000000 mode=paper
+2026-08-20 11:19:11 | INFO     | grid_bot.trading | dca_manager:421 | Manual buy placed: grid=grd_1787224751627_64bf1b order=ord_1787224751808_283d26 qty=0.00084000 @ ₹7086005.40 mode=paper
+2026-08-20 11:19:14 | INFO     | grid_bot.trading | order_manager:329 | order.filled       order=ord_1787224751640_6e22ca grid=grd_1787224751627_64bf1b symbol=BTCINR side=buy exchange_id=PAPER_000003 filled=0.00120000 (was open)
+2026-08-20 11:19:14 | INFO     | grid_bot.trading | order_monitor:163 | order.filled   order=ord_1787224751640_6e22ca grid=grd_1787224751627_64bf1b symbol=BTCINR side=buy exchange_id=PAPER_000003 qty=0.00120000 @ ₹7086043.18
+2026-08-20 11:19:14 | WARNING  | grid_bot.trading | dca_manager:863 | Could not resolve fee for order ord_1787224751640_6e22ca via trade history: CoinDCX rejected credentials on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:14 | INFO     | grid_bot.trading | dca_manager:1263 | Buy filled grd_1787224751627_64bf1b: qty 0.00120000 @ ₹7086043.18 → avg ₹7086043.18 level 1
+2026-08-20 11:19:14 | WARNING  | grid_bot.trading | order_monitor:281 | Exchange sync: get_open_orders(BTCINR) failed: CoinDCX rejected credentials on /exchange/v1/orders/active_orders: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:14 | INFO     | grid_bot.trading | order_monitor:309 | exchange_sync: order=ord_1787224751808_283d26 exchange_id=PAPER_000004 new_status=open
+2026-08-20 11:19:14 | INFO     | grid_bot.trading | order_monitor:119 | Exchange sync: synced=1 fills=0
+2026-08-20 11:19:15 | INFO     | grid_bot.trading | order_manager:97 | order.pending  order=ord_1787224755937_050197 grid=grd_1787224751627_64bf1b symbol=BTCINR side=sell qty=0.00084000 price=7086005.4000 mode=paper
+2026-08-20 11:19:15 | INFO     | grid_bot.trading | order_manager:179 | order.open         order=ord_1787224755937_050197 grid=grd_1787224751627_64bf1b symbol=BTCINR side=sell exchange_id=PAPER_000005 qty=0.00084000 filled=0.00000000 mode=paper
+2026-08-20 11:19:15 | INFO     | grid_bot.trading | dca_manager:605 | Manual sell placed: grid=grd_1787224751627_64bf1b order=ord_1787224755937_050197 qty=0.00084000 @ ₹7086005.40 mode=paper
+2026-08-20 11:19:22 | INFO     | grid_bot.trading | order_manager:329 | order.filled       order=ord_1787224751808_283d26 grid=grd_1787224751627_64bf1b symbol=BTCINR side=buy exchange_id=PAPER_000004 filled=0.00084000 (was open)
+2026-08-20 11:19:22 | INFO     | grid_bot.trading | order_monitor:163 | order.filled   order=ord_1787224751808_283d26 grid=grd_1787224751627_64bf1b symbol=BTCINR side=buy exchange_id=PAPER_000004 qty=0.00084000 @ ₹7089742.17
+2026-08-20 11:19:22 | WARNING  | grid_bot.trading | dca_manager:863 | Could not resolve fee for order ord_1787224751808_283d26 via trade history: CoinDCX rejected credentials on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:22 | INFO     | grid_bot.trading | dca_manager:1263 | Buy filled grd_1787224751627_64bf1b: qty 0.00084000 @ ₹7089742.17 → avg ₹7087566.29 level 2
+2026-08-20 11:19:22 | INFO     | grid_bot.trading | order_manager:329 | order.filled       order=ord_1787224755937_050197 grid=grd_1787224751627_64bf1b symbol=BTCINR side=sell exchange_id=PAPER_000005 filled=0.00084000 (was open)
+2026-08-20 11:19:22 | INFO     | grid_bot.trading | order_monitor:163 | order.filled   order=ord_1787224755937_050197 grid=grd_1787224751627_64bf1b symbol=BTCINR side=sell exchange_id=PAPER_000005 qty=0.00084000 @ ₹7081578.08
+2026-08-20 11:19:22 | WARNING  | grid_bot.trading | dca_manager:863 | Could not resolve fee for order ord_1787224755937_050197 via trade history: CoinDCX rejected credentials on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:22 | INFO     | grid_bot.trading | dca_manager:1352 | Sell filled grd_1787224751627_64bf1b: qty 0.00084000 @ ₹7081578.08 pnl ₹-5.03 fee ₹0.00 (net ₹-5.03 total realized ₹-5.03)
+2026-08-20 11:19:28 | INFO     | grid_bot.trading | dca_manager:357 | Grid grd_1787224751627_64bf1b stopped (reason: manual_dashboard)
+2026-08-20 11:19:28 | CRITICAL | grid_bot.trading | risk_manager:55 | EMERGENCY STOP triggered. All new trading actions are blocked.
+2026-08-20 11:19:28 | WARNING  | grid_bot.trading | risk_manager:60 | Emergency stop cleared. Trading actions re-enabled.
+2026-08-20 11:19:28 | INFO     | grid_bot.trading | dca_manager:264 | Created DCA grid grd_1787224768740_95f231 for BTCINR (entry ₹5000000.00)
+2026-08-20 11:19:28 | INFO     | grid_bot.trading | order_manager:97 | order.pending  order=ord_1787224768751_e83a63 grid=grd_1787224768740_95f231 symbol=BTCINR side=buy qty=0.00120000 price=5000000.0000 mode=paper
+2026-08-20 11:19:28 | INFO     | grid_bot.trading | order_manager:179 | order.open         order=ord_1787224768751_e83a63 grid=grd_1787224768740_95f231 symbol=BTCINR side=buy exchange_id=PAPER_000006 qty=0.00120000 filled=0.00000000 mode=paper
+2026-08-20 11:19:28 | CRITICAL | grid_bot.trading | risk_manager:55 | EMERGENCY STOP triggered. All new trading actions are blocked.
+2026-08-20 11:19:28 | WARNING  | grid_bot.trading | risk_manager:60 | Emergency stop cleared. Trading actions re-enabled.
+2026-08-20 11:19:28 | INFO     | grid_bot.trading | order_manager:97 | order.pending  order=ord_1787224768870_59a9cd grid=grd_1787224768740_95f231 symbol=BTCINR side=buy qty=0.00084000 price=7084487.8000 mode=paper
+2026-08-20 11:19:28 | INFO     | grid_bot.trading | order_manager:179 | order.open         order=ord_1787224768870_59a9cd grid=grd_1787224768740_95f231 symbol=BTCINR side=buy exchange_id=PAPER_000007 qty=0.00084000 filled=0.00000000 mode=paper
+2026-08-20 11:19:28 | INFO     | grid_bot.trading | dca_manager:421 | Manual buy placed: grid=grd_1787224768740_95f231 order=ord_1787224768870_59a9cd qty=0.00084000 @ ₹7084487.80 mode=paper
+2026-08-20 11:19:30 | INFO     | grid_bot.trading | order_manager:329 | order.filled       order=ord_1787224768751_e83a63 grid=grd_1787224768740_95f231 symbol=BTCINR side=buy exchange_id=PAPER_000006 filled=0.00120000 (was open)
+2026-08-20 11:19:30 | INFO     | grid_bot.trading | order_monitor:163 | order.filled   order=ord_1787224768751_e83a63 grid=grd_1787224768740_95f231 symbol=BTCINR side=buy exchange_id=PAPER_000006 qty=0.00120000 @ ₹7089925.77
+2026-08-20 11:19:31 | WARNING  | grid_bot.trading | dca_manager:863 | Could not resolve fee for order ord_1787224768751_e83a63 via trade history: CoinDCX rejected credentials on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:31 | INFO     | grid_bot.trading | dca_manager:1263 | Buy filled grd_1787224768740_95f231: qty 0.00120000 @ ₹7089925.77 → avg ₹7089925.77 level 1
+2026-08-20 11:19:33 | INFO     | grid_bot.trading | order_manager:97 | order.pending  order=ord_1787224773095_385f6a grid=grd_1787224768740_95f231 symbol=BTCINR side=sell qty=0.00084000 price=7084487.8000 mode=paper
+2026-08-20 11:19:33 | INFO     | grid_bot.trading | order_manager:179 | order.open         order=ord_1787224773095_385f6a grid=grd_1787224768740_95f231 symbol=BTCINR side=sell exchange_id=PAPER_000008 qty=0.00084000 filled=0.00000000 mode=paper
+2026-08-20 11:19:33 | INFO     | grid_bot.trading | dca_manager:605 | Manual sell placed: grid=grd_1787224768740_95f231 order=ord_1787224773095_385f6a qty=0.00084000 @ ₹7084487.80 mode=paper
+2026-08-20 11:19:39 | INFO     | grid_bot.trading | order_manager:329 | order.filled       order=ord_1787224768870_59a9cd grid=grd_1787224768740_95f231 symbol=BTCINR side=buy exchange_id=PAPER_000007 filled=0.00084000 (was open)
+2026-08-20 11:19:39 | INFO     | grid_bot.trading | order_monitor:163 | order.filled   order=ord_1787224768870_59a9cd grid=grd_1787224768740_95f231 symbol=BTCINR side=buy exchange_id=PAPER_000007 qty=0.00084000 @ ₹7084889.53
+2026-08-20 11:19:39 | WARNING  | grid_bot.trading | dca_manager:863 | Could not resolve fee for order ord_1787224768870_59a9cd via trade history: CoinDCX rejected credentials on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:39 | INFO     | grid_bot.trading | dca_manager:1263 | Buy filled grd_1787224768740_95f231: qty 0.00084000 @ ₹7084889.53 → avg ₹7087852.02 level 2
+2026-08-20 11:19:39 | INFO     | grid_bot.trading | order_manager:329 | order.filled       order=ord_1787224773095_385f6a grid=grd_1787224768740_95f231 symbol=BTCINR side=sell exchange_id=PAPER_000008 filled=0.00084000 (was open)
+2026-08-20 11:19:39 | INFO     | grid_bot.trading | order_monitor:163 | order.filled   order=ord_1787224773095_385f6a grid=grd_1787224768740_95f231 symbol=BTCINR side=sell exchange_id=PAPER_000008 qty=0.00084000 @ ₹7080382.87
+2026-08-20 11:19:39 | WARNING  | grid_bot.trading | dca_manager:863 | Could not resolve fee for order ord_1787224773095_385f6a via trade history: CoinDCX rejected credentials on /exchange/v1/orders/trade_history: {"code":401,"message":"Invalid credentials","status":"error","errorCode":"BFF-AUTH-001"}
+2026-08-20 11:19:39 | INFO     | grid_bot.trading | dca_manager:1352 | Sell filled grd_1787224768740_95f231: qty 0.00084000 @ ₹7080382.87 pnl ₹-6.27 fee ₹0.00 (net ₹-6.27 total realized ₹-6.27)
+2026-08-20 11:19:41 | INFO     | grid_bot.trading | order_manager:97 | order.pending  order=ord_1787224781271_3bdd73 grid=grd_1787224768740_95f231 symbol=BTCINR side=sell qty=0.00120000 price=7081654.0000 mode=paper
+2026-08-20 11:19:41 | INFO     | grid_bot.trading | order_manager:179 | order.open         order=ord_1787224781271_3bdd73 grid=grd_1787224768740_95f231 symbol=BTCINR side=sell exchange_id=PAPER_000009 qty=0.00120000 filled=0.00000000 mode=paper
+2026-08-20 11:19:41 | INFO     | grid_bot.trading | dca_manager:605 | Manual sell placed: grid=grd_1787224768740_95f231 order=ord_1787224781271_3bdd73 qty=0.00120000 @ ₹7081654.00 mode=paper
+2026-08-20 11:19:41 | INFO     | grid_bot.trading | dca_manager:325 | Grid grd_1787224768740_95f231 paused
+2026-08-20 11:19:41 | INFO     | grid_bot.trading | dca_manager:334 | Grid grd_1787224768740_95f231 resumed
+2026-08-20 11:19:41 | INFO     | grid_bot.trading | order_manager:275 | order.cancelled order=ord_1787224781271_3bdd73 grid=grd_1787224768740_95f231 exchange_id=PAPER_000009
+2026-08-20 11:19:41 | INFO     | grid_bot.trading | dca_manager:357 | Grid grd_1787224768740_95f231 stopped (reason: manual_dashboard)
+2026-08-20 11:19:49 | INFO     | grid_bot.trading | main:376 | Shutdown signal received
+2026-08-20 11:19:49 | INFO     | grid_bot.trading | main:407 | Shutting down...
+2026-08-20 11:19:49 | INFO     | grid_bot.trading | price_monitor:160 | Price monitor stopped
+2026-08-20 11:19:49 | INFO     | grid_bot.trading | main:430 | Shutdown complete.
+2026-08-20 11:19:49 | INFO     | grid_bot.trading | app:87 | Dashboard shut down.
+2026-08-20 11:19:52 | INFO     | grid_bot.trading | main:167 | Starting Manual DCA Grid Trading Bot...
+2026-08-20 11:19:53 | INFO     | grid_bot.trading | main:195 | Telegram credentials not configured — running in dashboard/headless mode.
+2026-08-20 11:19:53 | INFO     | grid_bot.trading | alert_manager:61 | Loaded 0 price alert(s) from database
+2026-08-20 11:19:53 | INFO     | grid_bot.trading | price_monitor:115 | No persisted monitor interval found — using default: 5s
+2026-08-20 11:19:53 | INFO     | grid_bot.trading | recovery:57 | Starting recovery sequence...
+2026-08-20 11:19:53 | INFO     | grid_bot.trading | recovery:62 | Recovery: found 0 active/paused/stopping grid(s)
+2026-08-20 11:19:53 | INFO     | grid_bot.trading | recovery:78 | Recovery complete: grids=0 reconciled=0 fills=0 orphans=0
+2026-08-20 11:19:53 | INFO     | grid_bot.trading | order_monitor:67 | Order monitor started (poll=8s, full-sync every 10 cycles)
+2026-08-20 11:19:53 | INFO     | grid_bot.trading | price_monitor:150 | Price monitor started (interval=5s)
+2026-08-20 11:19:53 | INFO     | grid_bot.trading | app:128 | Serving built frontend from dashboard/static
+2026-08-20 11:19:53 | INFO     | grid_bot.trading | main:368 | Embedded dashboard enabled on 0.0.0.0:8000 (static_dir=dashboard/static)
+2026-08-20 11:19:53 | INFO     | grid_bot.trading | main:405 | Running in headless / Web Dashboard mode (Telegram bot disabled).
+2026-08-20 11:19:53 | INFO     | grid_bot.trading | app:81 | Dashboard started on 0.0.0.0:8000 against database data/grid_bot.db

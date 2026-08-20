@@ -1,0 +1,17 @@
+2026-08-20 11:14:29 | INFO     | grid_bot.database | database:265 | Connected to SQLite database at data/grid_bot.db (resolved: /app/data/grid_bot.db, pre-existing file: False)
+2026-08-20 11:14:29 | WARNING  | grid_bot.database | database:270 | No pre-existing database file was found at /app/data/grid_bot.db — a brand-new, empty database was just created. If you expected existing grids/history to be here, this likely means DATABASE_PATH or the mounted volume does not point at the same location as the previous deployment.
+2026-08-20 11:14:29 | INFO     | grid_bot.database | database:313 | Migration 1 applied: Add mode column to dca_grids
+2026-08-20 11:14:29 | INFO     | grid_bot.database | database:313 | Migration 2 applied: Add trailing take-profit columns to dca_grids
+2026-08-20 11:14:29 | INFO     | grid_bot.database | database:313 | Migration 3 applied: Add idempotent CoinDCX order submission fields
+2026-08-20 11:14:29 | INFO     | grid_bot.database | database:313 | Migration 4 applied: Add per-order fee column
+2026-08-20 11:14:29 | INFO     | grid_bot.database | database:316 | Database schema migration complete (schema_version=4)
+2026-08-20 11:15:21 | INFO     | grid_bot.database | database:265 | Connected to SQLite database at data/grid_bot.db (resolved: /app/data/grid_bot.db, pre-existing file: True)
+2026-08-20 11:15:21 | INFO     | grid_bot.database | database:316 | Database schema migration complete (schema_version=4)
+2026-08-20 11:15:22 | INFO     | grid_bot.database | database:265 | Connected to SQLite database at data/grid_bot.db (resolved: /app/data/grid_bot.db, pre-existing file: True)
+2026-08-20 11:15:22 | INFO     | grid_bot.database | database:316 | Database schema migration complete (schema_version=4)
+2026-08-20 11:19:49 | INFO     | grid_bot.database | database:322 | Database connection closed
+2026-08-20 11:19:49 | INFO     | grid_bot.database | database:322 | Database connection closed
+2026-08-20 11:19:52 | INFO     | grid_bot.database | database:265 | Connected to SQLite database at data/grid_bot.db (resolved: /app/data/grid_bot.db, pre-existing file: True)
+2026-08-20 11:19:52 | INFO     | grid_bot.database | database:316 | Database schema migration complete (schema_version=4)
+2026-08-20 11:19:53 | INFO     | grid_bot.database | database:265 | Connected to SQLite database at data/grid_bot.db (resolved: /app/data/grid_bot.db, pre-existing file: True)
+2026-08-20 11:19:53 | INFO     | grid_bot.database | database:316 | Database schema migration complete (schema_version=4)
