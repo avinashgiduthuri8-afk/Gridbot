@@ -1092,3 +1092,97 @@ def test_ui_empty_states_payload_completeness(dashboard_client):
     assert dashboard_client.get("/api/positions").json() == {"positions": [], "count": 0}
     assert dashboard_client.get("/api/orders").json() == {"orders": [], "count": 0}
     assert dashboard_client.get("/api/trade-history").json() == {"trades": [], "count": 0}
+
+
+
+
+def test_strict_get_only_route_policy(dashboard_client):
+    forbidden_methods = {"POST", "PUT", "PATCH", "DELETE"}
+    app_routes = dashboard_client.app.routes
+    for route in app_routes:
+        methods = getattr(route, "methods", set()) or set()
+        violations = methods.intersection(forbidden_methods)
+        assert not violations, f"Route {getattr(route, 'path', route)} exposes forbidden mutation methods: {violations}"
+
+
+def test_read_only_database_all_write_operations_blocked(dashboard_client):
+    conn = dashboard_client.app.state.db.connection
+
+    failing_queries = [
+        "CREATE TABLE test_tbl (id INT)",
+        "INSERT INTO schema_migrations (version) VALUES (999)",
+        "UPDATE dca_grids SET status = 'stopped'",
+        "DELETE FROM dca_grids",
+        "DROP TABLE IF EXISTS dca_grids",
+    ]
+
+    for q in failing_queries:
+        with pytest.raises(sqlite3.OperationalError):
+            _seed(conn.execute(q))
+
+
+def test_dashboard_contract_all_endpoints_schema_field_presence(dashboard_client):
+    repos = dashboard_client.app.state.seed_repos
+    grid = _make_grid()
+    order = _make_order(grid.grid_id)
+    trade = _make_trade(grid.grid_id, order_id=order.order_id)
+    _seed(repos.grids.create(grid), repos.orders.create(order), repos.trade_history.record(trade))
+
+    h = dashboard_client.get("/api/health").json()
+    assert {"status", "database_connected"}.issubset(h.keys())
+
+    p = dashboard_client.get("/api/portfolio").json()
+    assert {"total_realized", "total_unrealized", "total_invested", "portfolio_return_pct", "active_grid_count", "paused_grid_count", "completed_grid_count", "stopped_grid_count"}.issubset(p.keys())
+
+    g = dashboard_client.get("/api/grids").json()
+    assert {"grids", "count"}.issubset(g.keys())
+    assert {"grid_id", "symbol", "status", "mode", "entry_price", "base_investment", "current_level", "max_levels", "total_investment", "realized_profit", "completed_cycles", "trailing_enabled"}.issubset(g["grids"][0].keys())
+
+    gd = dashboard_client.get(f"/api/grids/{grid.grid_id}").json()
+    assert {"grid_id", "symbol", "status", "mode", "created_at", "updated_at"}.issubset(gd.keys())
+
+    pos = dashboard_client.get("/api/positions").json()
+    assert {"positions", "count"}.issubset(pos.keys())
+    assert {"grid_id", "symbol", "status", "quantity", "average_entry_price", "invested", "realized_pnl", "unrealized_pnl", "combined_pnl"}.issubset(pos["positions"][0].keys())
+
+    ords = dashboard_client.get("/api/orders").json()
+    assert {"orders", "count"}.issubset(ords.keys())
+    assert {"order_id", "grid_id", "symbol", "side", "order_type", "price", "quantity", "status", "fee", "created_at"}.issubset(ords["orders"][0].keys())
+
+    trds = dashboard_client.get("/api/trade-history").json()
+    assert {"trades", "count"}.issubset(trds.keys())
+    assert {"trade_id", "grid_id", "order_id", "symbol", "side", "price", "quantity", "investment_inr", "fee", "pnl", "executed_at"}.issubset(trds["trades"][0].keys())
+
+    an = dashboard_client.get("/api/analytics").json()
+    assert {"total_buys", "total_sells", "total_dust_writeoffs", "total_realized_profit", "win_rate_pct", "max_drawdown_pct", "profit_factor", "completed_cycles"}.issubset(an.keys())
+
+    st = dashboard_client.get("/api/settings").json()
+    assert {"risk", "order_poll_interval_seconds", "price_poll_interval_seconds", "emergency_stop_active", "backup_enabled", "webhook_enabled"}.issubset(st.keys())
+
+
+def test_dashboard_data_consistency_invariants(dashboard_client):
+    repos = dashboard_client.app.state.seed_repos
+    grid1 = _make_grid(symbol="BTCINR", realized_profit=300.0)
+    grid2 = _make_grid(symbol="ETHINR", realized_profit=150.0)
+    _seed(repos.grids.create(grid1), repos.grids.create(grid2))
+
+    portfolio = dashboard_client.get("/api/portfolio").json()
+    analytics = dashboard_client.get("/api/analytics").json()
+    grids = dashboard_client.get("/api/grids").json()
+
+    grid_profit_sum = sum(g["realized_profit"] for g in grids["grids"])
+    assert portfolio["total_realized"] == grid_profit_sum == 450.0
+    assert analytics["total_realized_profit"] == grid_profit_sum == 450.0
+    assert portfolio["active_grid_count"] == len([g for g in grids["grids"] if g["status"] == "active"]) == 2
+
+
+def test_dashboard_error_isolation_and_resilience(dashboard_client):
+    res_unknown = dashboard_client.get("/api/unknown_route_999")
+    assert res_unknown.status_code == 404
+
+    res_grid_404 = dashboard_client.get("/api/grids/nonexistent_grid_123")
+    assert res_grid_404.status_code == 404
+    assert "not found" in res_grid_404.json()["detail"].lower()
+
+    res_health = dashboard_client.get("/api/health")
+    assert res_health.status_code == 200
