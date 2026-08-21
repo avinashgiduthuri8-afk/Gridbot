@@ -22,6 +22,7 @@ from storage.repositories.monitor_settings import (
 )
 from storage.repositories.orders import OrderRepository
 from storage.repositories.price_alerts import PriceAlertRepository
+from storage.repositories.signals import SignalRepository
 from storage.repositories.trade_history import TradeHistoryRepository
 
 __all__ = [
@@ -33,6 +34,7 @@ __all__ = [
     "MonitorSettingsRepository",
     "PriceAlertRepository",
     "GridDefaultsRepository",
+    "SignalRepository",
     "Repositories",
     "VALID_MONITOR_INTERVALS",
     "DEFAULT_MONITOR_INTERVAL",
@@ -52,3 +54,5 @@ class Repositories:
         self.monitor_settings = MonitorSettingsRepository(db)
         self.price_alerts = PriceAlertRepository(db)
         self.grid_defaults = GridDefaultsRepository(db)
+        self.signals = SignalRepository(db)
+

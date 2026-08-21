@@ -13,6 +13,12 @@ import type {
   ManualTradeResponse,
   GridActionResponse,
   EmergencyStopResponse,
+  MarketRegimeResponse,
+  SectorMatrixResponse,
+  ScanResponse,
+  BacktestReportResponse,
+  SignalPerformanceStats,
+  SessionInfo,
 } from '../types/dashboard';
 
 const API_BASE_URL =
@@ -66,6 +72,43 @@ async function fetchApi<T>(endpoint: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  // Indian Stock Scanner APIs (PROJECT-BETA)
+  triggerScan: (universe = 'NIFTY_100', maxSignals = 3) =>
+    fetchApi<ScanResponse>('/scanner/scan', {
+      method: 'POST',
+      body: JSON.stringify({ universe, max_signals: maxSignals }),
+    }),
+
+  getLatestScan: () => fetchApi<ScanResponse>('/scanner/latest'),
+
+  getSessionStatus: () => fetchApi<SessionInfo>('/scanner/session'),
+
+  getMarketRegime: () => fetchApi<MarketRegimeResponse>('/regime'),
+
+  getSectorMatrix: () => fetchApi<SectorMatrixResponse>('/sectors'),
+
+  getSignalsHistory: (limit = 50, status?: string, minScore?: number) => {
+    const params = new URLSearchParams();
+    if (limit) params.append('limit', limit.toString());
+    if (status) params.append('status', status);
+    if (minScore !== undefined) params.append('min_score', minScore.toString());
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return fetchApi<any[]>(`/signals${query}`);
+  },
+
+  getSignalDetail: (signalId: string) =>
+    fetchApi<any>(`/signals/${encodeURIComponent(signalId)}`),
+
+  getSignalPerformance: () =>
+    fetchApi<SignalPerformanceStats>('/signals/performance'),
+
+  runBacktest: (universe = 'NIFTY_50', lookbackBars = 60) =>
+    fetchApi<BacktestReportResponse>('/backtest/run', {
+      method: 'POST',
+      body: JSON.stringify({ universe, lookback_bars: lookbackBars }),
+    }),
+
+  // Legacy / Core Bot APIs
   getHealth: () => fetchApi<HealthResponse>('/health'),
 
   getGrids: () => fetchApi<GridListResponse>('/grids'),

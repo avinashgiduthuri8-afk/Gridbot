@@ -210,11 +210,60 @@ async def _migration_004_add_order_fee_column(conn: aiosqlite.Connection) -> Non
         )
 
 
+async def _migration_005_add_stock_signals_and_backtest_tables(conn: aiosqlite.Connection) -> None:
+    """Create persistent tables for Indian Stock Signals, MFE/MAE tracking, and Backtest results."""
+    await conn.execute("""
+    CREATE TABLE IF NOT EXISTS stock_signals (
+        signal_id           TEXT PRIMARY KEY,
+        symbol              TEXT NOT NULL,
+        signal_type         TEXT NOT NULL,
+        strength            TEXT NOT NULL,
+        score               REAL NOT NULL,
+        entry_price         REAL NOT NULL,
+        stop_loss           REAL NOT NULL,
+        target_1            REAL NOT NULL,
+        target_2            REAL NOT NULL,
+        risk_reward         REAL NOT NULL,
+        market_regime       TEXT NOT NULL,
+        sector              TEXT NOT NULL,
+        timeframe_summary   TEXT NOT NULL,
+        rationale_json      TEXT NOT NULL,
+        breakdown_json      TEXT NOT NULL,
+        status              TEXT NOT NULL DEFAULT 'OPEN',
+        mfe                 REAL NOT NULL DEFAULT 0.0,
+        mae                 REAL NOT NULL DEFAULT 0.0,
+        outcome_pnl_pct     REAL NOT NULL DEFAULT 0.0,
+        created_at          TEXT NOT NULL,
+        resolved_at         TEXT
+    );
+    """)
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_stock_signals_symbol ON stock_signals(symbol);")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_stock_signals_status ON stock_signals(status);")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_stock_signals_score ON stock_signals(score);")
+
+    await conn.execute("""
+    CREATE TABLE IF NOT EXISTS signal_backtests (
+        backtest_id         TEXT PRIMARY KEY,
+        universe            TEXT NOT NULL,
+        start_date          TEXT NOT NULL,
+        end_date            TEXT NOT NULL,
+        total_signals       INTEGER NOT NULL,
+        win_rate_pct        REAL NOT NULL,
+        avg_return_pct      REAL NOT NULL,
+        profit_factor       REAL NOT NULL,
+        max_drawdown_pct    REAL NOT NULL,
+        regime_breakdown_json TEXT NOT NULL,
+        created_at          TEXT NOT NULL
+    );
+    """)
+
+
 _MIGRATIONS: list[tuple[int, str, Callable[[aiosqlite.Connection], Awaitable[None]]]] = [
     (1, "Add mode column to dca_grids", _migration_001_add_mode_column),
     (2, "Add trailing take-profit columns to dca_grids", _migration_002_add_trailing_columns),
     (3, "Add idempotent CoinDCX order submission fields", _migration_003_add_idempotent_submission_columns),
     (4, "Add per-order fee column", _migration_004_add_order_fee_column),
+    (5, "Add Indian stock signals and backtest evaluation tables", _migration_005_add_stock_signals_and_backtest_tables),
 ]
 
 

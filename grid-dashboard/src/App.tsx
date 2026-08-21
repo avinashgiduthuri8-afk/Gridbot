@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { DashboardLayout } from './components/layout/DashboardLayout';
 import { OverviewPage } from './pages/OverviewPage';
+import { ScannerPage } from './pages/ScannerPage';
+import { SectorsPage } from './pages/SectorsPage';
+import { SignalsHistoryPage } from './pages/SignalsHistoryPage';
+import { BacktestPage } from './pages/BacktestPage';
 import { ActiveGridsPage } from './pages/ActiveGridsPage';
 import { PositionsPage } from './pages/PositionsPage';
 import { OrdersPage } from './pages/OrdersPage';
@@ -26,6 +30,14 @@ export function App() {
             onRefresh={refetch}
           />
         );
+      case 'scanner':
+        return <ScannerPage />;
+      case 'sectors':
+        return <SectorsPage />;
+      case 'signals':
+        return <SignalsHistoryPage />;
+      case 'backtest':
+        return <BacktestPage />;
       case 'active-grids':
         return <ActiveGridsPage data={data} loading={loading} onRefresh={refetch} />;
       case 'positions':

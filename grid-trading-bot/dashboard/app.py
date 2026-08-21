@@ -13,8 +13,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from api.routers import analytics, grids, health, orders, portfolio, positions, settings, trade_history
+from api.routers import (
+    analytics,
+    backtest,
+    grids,
+    health,
+    orders,
+    portfolio,
+    positions,
+    regime,
+    scanner,
+    sectors,
+    settings,
+    signals,
+    trade_history,
+)
 from dashboard.config import load_dashboard_settings
+from services.scanner_service import ScannerService
 from storage.database import Database
 from storage.repositories import Repositories
 from utils.logger import get_logger, setup_logging
@@ -30,16 +45,23 @@ async def lifespan(app: FastAPI):
     app.state.settings = dashboard_settings
 
     if not hasattr(app.state, "db") or app.state.db is None:
-        db = Database(dashboard_settings.database_path)
+        db = Database(dashboard_settings.database_path, read_only=True)
         try:
             await db.connect()
-            await db.migrate()
             app.state.db = db
             app.state.repos = Repositories(db)
         except Exception as exc:
             log.warning("Database initialization in dashboard: %s", exc)
             app.state.db = None
             app.state.repos = None
+
+    # Initialize Indian Stock Scanner Service
+    if not hasattr(app.state, "scanner_service") or app.state.scanner_service is None:
+        try:
+            app.state.scanner_service = ScannerService()
+            log.info("ScannerService initialized successfully.")
+        except Exception as exc:
+            log.warning("Could not initialize ScannerService: %s", exc)
 
     if app.state.repos is not None and (not hasattr(app.state, "dca_manager") or app.state.dca_manager is None):
         try:
@@ -89,9 +111,9 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="Grid Bot Dashboard API",
-        description="REST API for Grid Bot dashboard monitoring and manual trade execution.",
-        version="0.2.0",
+        title="Indian Stock Market Scanner API (PROJECT-BETA)",
+        description="Institutional multi-timeframe scanner and analytics API for NSE/BSE equities.",
+        version="0.3.0",
         lifespan=lifespan,
     )
 
@@ -111,7 +133,21 @@ def create_app() -> FastAPI:
             content={"detail": "Database unavailable or unmigrated"},
         )
 
-    for router_module in (health, grids, positions, orders, trade_history, portfolio, analytics, settings):
+    for router_module in (
+        health,
+        scanner,
+        regime,
+        sectors,
+        signals,
+        backtest,
+        grids,
+        positions,
+        orders,
+        trade_history,
+        portfolio,
+        analytics,
+        settings,
+    ):
         app.include_router(router_module.router, prefix="/api")
 
     static_dir = dashboard_settings.static_dir
@@ -123,6 +159,9 @@ def create_app() -> FastAPI:
 
         @app.get("/{full_path:path}", include_in_schema=False)
         async def serve_spa(full_path: str):
+            if full_path.startswith("api/") or full_path == "api":
+                from fastapi import HTTPException
+                raise HTTPException(status_code=404, detail="Not Found")
             return FileResponse(str(index_path))
 
         log.info("Serving built frontend from %s", static_dir)

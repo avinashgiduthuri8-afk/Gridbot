@@ -14,7 +14,11 @@ interface HeaderProps {
 }
 
 const TAB_TITLES: Record<NavigationTab, string> = {
-  overview: 'Dashboard Overview',
+  overview: 'Market Overview & Regime',
+  scanner: 'Indian Stock Scanner',
+  sectors: 'Sector Strength & Momentum',
+  signals: 'Signals Log & MFE/MAE History',
+  backtest: 'Scanner Backtesting Suite',
   'active-grids': 'Active Grids',
   positions: 'Open Positions',
   orders: 'Orders Management',
@@ -40,7 +44,7 @@ export const Header: React.FC<HeaderProps> = ({
       <header className="header">
         <div className="header-title-section">
           <h1 className="header-title">{TAB_TITLES[activeTab]}</h1>
-          <StatusBadge status="paper" label="Paper Mode" />
+          <StatusBadge status="paper" label="NSE / BSE Mode" />
           {emergencyStopActive && (
             <StatusBadge status="error" label="EMERGENCY STOP ON" />
           )}

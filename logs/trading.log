@@ -137,3 +137,16 @@
 2026-08-21 04:14:39 | INFO     | grid_bot.trading | main:368 | Embedded dashboard enabled on 0.0.0.0:8000 (static_dir=dashboard/static)
 2026-08-21 04:14:39 | INFO     | grid_bot.trading | main:405 | Running in headless / Web Dashboard mode (Telegram bot disabled).
 2026-08-21 04:14:39 | INFO     | grid_bot.trading | app:81 | Dashboard started on 0.0.0.0:8000 against database data/grid_bot.db
+2026-08-21 17:03:18 | INFO     | grid_bot.trading | main:167 | Starting Manual DCA Grid Trading Bot...
+2026-08-21 17:03:19 | INFO     | grid_bot.trading | main:195 | Telegram credentials not configured — running in dashboard/headless mode.
+2026-08-21 17:03:19 | INFO     | grid_bot.trading | alert_manager:61 | Loaded 0 price alert(s) from database
+2026-08-21 17:03:19 | INFO     | grid_bot.trading | price_monitor:115 | No persisted monitor interval found — using default: 5s
+2026-08-21 17:03:19 | INFO     | grid_bot.trading | recovery:57 | Starting recovery sequence...
+2026-08-21 17:03:19 | INFO     | grid_bot.trading | recovery:62 | Recovery: found 0 active/paused/stopping grid(s)
+2026-08-21 17:03:19 | INFO     | grid_bot.trading | recovery:78 | Recovery complete: grids=0 reconciled=0 fills=0 orphans=0
+2026-08-21 17:03:19 | INFO     | grid_bot.trading | order_monitor:67 | Order monitor started (poll=8s, full-sync every 10 cycles)
+2026-08-21 17:03:19 | INFO     | grid_bot.trading | price_monitor:150 | Price monitor started (interval=5s)
+2026-08-21 17:03:19 | INFO     | grid_bot.trading | app:128 | Serving built frontend from dashboard/static
+2026-08-21 17:03:19 | INFO     | grid_bot.trading | main:368 | Embedded dashboard enabled on 0.0.0.0:8000 (static_dir=dashboard/static)
+2026-08-21 17:03:19 | INFO     | grid_bot.trading | main:405 | Running in headless / Web Dashboard mode (Telegram bot disabled).
+2026-08-21 17:03:19 | INFO     | grid_bot.trading | app:81 | Dashboard started on 0.0.0.0:8000 against database data/grid_bot.db

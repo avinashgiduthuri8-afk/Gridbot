@@ -2,6 +2,10 @@ import React from 'react';
 import { Card } from '../components/common/Card';
 import type { NavigationTab } from '../types/dashboard';
 import {
+  Search,
+  PieChart,
+  Target,
+  PlaySquare,
   Grid,
   Layers,
   ListOrdered,
@@ -19,6 +23,26 @@ const TAB_CONFIGS: Record<
   Exclude<NavigationTab, 'overview'>,
   { title: string; desc: string; icon: React.ReactNode }
 > = {
+  scanner: {
+    title: 'Indian Stock Scanner View',
+    desc: 'Multi-timeframe technical setup screening and conviction ranking.',
+    icon: <Search size={32} />,
+  },
+  sectors: {
+    title: 'Sector Momentum Matrix View',
+    desc: 'Relative strength analysis of 11 NSE sectors versus NIFTY 50.',
+    icon: <PieChart size={32} />,
+  },
+  signals: {
+    title: 'Signal History & Excursions View',
+    desc: 'MFE/MAE tracking, outcome status, and historical win rates.',
+    icon: <Target size={32} />,
+  },
+  backtest: {
+    title: 'Backtest Simulator View',
+    desc: 'Simulate scanner performance across historical market regimes.',
+    icon: <PlaySquare size={32} />,
+  },
   'active-grids': {
     title: 'Active Grids View',
     desc: 'Manage and monitor multi-level DCA buy/sell grid triggers per coin.',
