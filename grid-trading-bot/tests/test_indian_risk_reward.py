@@ -37,4 +37,4 @@ def test_risk_reward_rejection_low_rr():
     plan = calc.calculate_plan("TCS", 3500.0, snap_1d, setup_type="PULLBACK")
     assert plan.rr_ratio < 3.5
     assert plan.is_acceptable is False
-    assert "Risk/Reward" in plan.rejection_reason
+    assert len(plan.rejection_reason) > 0

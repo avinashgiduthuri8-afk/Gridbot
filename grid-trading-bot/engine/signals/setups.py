@@ -1,15 +1,15 @@
 """Technical Setup Identification Engine for Indian Equities.
 
-Evaluates high-probability setups:
-1. Resistance Breakout with Volume Expansion
-2. Trend Pullback to Dynamic Support (EMA 20/50)
-3. Momentum Continuation (ADX > 25, Relative Strength)
-4. Selective High-Conviction Reversals
+Evaluates high-probability setups with strict price-action & volume confirmation:
+1. Resistance Breakout with Volatility Compression (Squeeze) & Volume Expansion
+2. Trend Pullback with Volume Contraction (Dry-Up) to Dynamic Support (EMA 20/50)
+3. Momentum Continuation (ADX >= 25, DI+ dominance, VWAP support)
+4. Selective High-Conviction Reversals at Major Daily Support
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from config.constants import SignalType
@@ -27,6 +27,10 @@ class SetupEvaluation:
     description: str
     trigger_price: float
     key_level: float
+    setup_reason: str = ""
+    confirmation_reason: str = ""
+    rejection_risks: list[str] = field(default_factory=list)
+    is_false_breakout_risk: bool = False
 
 
 class TechnicalSetupDetector:
@@ -68,18 +72,35 @@ class TechnicalSetupDetector:
         snap_1d: IndicatorSnapshot,
         snap_15m: IndicatorSnapshot | None = None,
     ) -> SetupEvaluation:
-        """Evaluates 20-day swing resistance breakout with volume surge."""
+        """Evaluates 20-day swing resistance breakout with compression and volume."""
         price = snap_1d.last_price
         resistance = snap_1d.resistance_20 or price
         volume_surge = snap_1d.volume_surge_ratio
         rsi = snap_1d.rsi or 50.0
+        bb_width = snap_1d.bb_bandwidth or 1.0
 
-        # Breakout condition: Price at or within 0.8% of resistance or breaking out
-        is_breaking = price >= (resistance * 0.995)
-        has_volume = volume_surge >= 1.3
-        has_momentum = rsi >= 55.0
+        risks: list[str] = []
 
-        is_triggered = is_breaking and has_momentum
+        # Breakout condition: Price breaking resistance
+        is_breaking = price >= (resistance * 0.998)
+        has_volume = volume_surge >= 1.4
+        has_momentum = 55.0 <= rsi <= 76.0
+
+        # Check for volatility compression (Bollinger Band squeeze)
+        is_compressed = bb_width < 0.12 or (snap_1d.atr and snap_1d.atr < (price * 0.02))
+
+        # Check for false breakout upper wick rejection on 15M trigger bar if available
+        is_false_breakout = False
+        if snap_15m and snap_15m.last_price < snap_15m.open:
+            # Red 15M trigger bar after touching resistance
+            if snap_15m.last_price < (resistance * 0.995):
+                is_false_breakout = True
+                risks.append("Intraday rejection wick at resistance")
+
+        if rsi > 76.0:
+            risks.append(f"RSI overbought ({rsi:.1f})")
+
+        is_triggered = is_breaking and has_momentum and not is_false_breakout
         score = 0.0
 
         if is_triggered:
@@ -87,19 +108,31 @@ class TechnicalSetupDetector:
             if volume_surge >= 1.8:
                 score += 3.0
             elif volume_surge >= 1.4:
-                score += 2.0
+                score += 1.5
 
-            if 58.0 <= rsi <= 72.0:
-                score += 2.0
+            if is_compressed:
+                score += 2.0  # Bonus for breakout from tight compression
 
-        desc = f"Resistance breakout above ₹{resistance:.2f} with {volume_surge:.1f}x volume surge"
+            if snap_1d.is_above_vwap:
+                score += 1.0
+
+            if snap_1d.macd_hist and snap_1d.macd_hist > 0:
+                score += 1.0
+
+        setup_reason = f"Breakout above 20-day resistance ₹{resistance:.2f}"
+        conf_reason = f"Confirmed with {volume_surge:.1f}x volume surge and RSI {rsi:.1f}"
+
         return SetupEvaluation(
             setup_type=SignalType.BREAKOUT,
             is_triggered=is_triggered,
             quality_score=min(score, 15.0),
-            description=desc,
+            description=f"{setup_reason} ({conf_reason})",
             trigger_price=price,
             key_level=resistance,
+            setup_reason=setup_reason,
+            confirmation_reason=conf_reason,
+            rejection_risks=risks,
+            is_false_breakout_risk=is_false_breakout,
         )
 
     def _detect_pullback(
@@ -107,11 +140,14 @@ class TechnicalSetupDetector:
         snap_1d: IndicatorSnapshot,
         snap_15m: IndicatorSnapshot | None = None,
     ) -> SetupEvaluation:
-        """Evaluates pullback to 20/50 EMA in an established uptrend."""
+        """Evaluates pullback to 20/50 EMA in established uptrend on contracting volume."""
         price = snap_1d.last_price
         ema_20 = snap_1d.ema_20
         ema_50 = snap_1d.ema_50
         rsi = snap_1d.rsi or 50.0
+        volume_surge = snap_1d.volume_surge_ratio
+
+        risks: list[str] = []
 
         if not (ema_20 and ema_50 and ema_20 > ema_50):
             return SetupEvaluation(
@@ -125,27 +161,40 @@ class TechnicalSetupDetector:
 
         # Price within 1.5% of EMA 20 or EMA 50
         dist_to_ema20_pct = abs(price - ema_20) / ema_20 * 100.0
-        is_near_support = dist_to_ema20_pct <= 1.8 and price >= (ema_20 * 0.985)
-        rsi_recovering = 45.0 <= rsi <= 62.0
+        is_near_support = dist_to_ema20_pct <= 2.0 and price >= (ema_20 * 0.982)
+        rsi_recovering = 45.0 <= rsi <= 64.0
+
+        # Healthy pullback has dry volume (volume surge <= 1.2 during dip)
+        is_dry_volume = volume_surge <= 1.2
+
+        if not is_dry_volume:
+            risks.append(f"Elevated selling volume ({volume_surge:.1f}x) during pullback")
 
         is_triggered = is_near_support and rsi_recovering
         score = 0.0
 
         if is_triggered:
             score = 11.0
+            if is_dry_volume:
+                score += 2.0  # Healthy low-volume retracement
             if snap_1d.is_above_vwap:
-                score += 2.0
+                score += 1.0
             if snap_1d.macd_hist and snap_1d.macd_hist > 0:
-                score += 2.0
+                score += 1.0
 
-        desc = f"Pullback test of 20 EMA (₹{ema_20:.2f}) with RSI {rsi:.1f} recovery"
+        setup_reason = f"Orderly pullback to 20 EMA (₹{ema_20:.2f})"
+        conf_reason = f"Support holding with RSI {rsi:.1f} stabilization and low volume"
+
         return SetupEvaluation(
             setup_type=SignalType.PULLBACK,
             is_triggered=is_triggered,
             quality_score=min(score, 15.0),
-            description=desc,
+            description=f"{setup_reason} ({conf_reason})",
             trigger_price=price,
             key_level=ema_20,
+            setup_reason=setup_reason,
+            confirmation_reason=conf_reason,
+            rejection_risks=risks,
         )
 
     def _detect_momentum_continuation(
@@ -153,15 +202,20 @@ class TechnicalSetupDetector:
         snap_1d: IndicatorSnapshot,
         snap_15m: IndicatorSnapshot | None = None,
     ) -> SetupEvaluation:
-        """Evaluates strong trend momentum continuation (ADX > 25, DI+ > DI-)."""
+        """Evaluates strong trend momentum continuation (ADX >= 25, DI+ > DI-, VWAP support)."""
         price = snap_1d.last_price
         adx = snap_1d.adx or 0.0
         di_p = snap_1d.di_plus or 0.0
         di_m = snap_1d.di_minus or 0.0
         rsi = snap_1d.rsi or 50.0
 
+        risks: list[str] = []
+
         is_trending = adx >= 24.0 and di_p > di_m
-        is_bullish_momentum = 60.0 <= rsi <= 78.0
+        is_bullish_momentum = 58.0 <= rsi <= 76.0
+
+        if rsi > 74.0:
+            risks.append("Momentum near upper band (RSI > 74)")
 
         is_triggered = is_trending and is_bullish_momentum and snap_1d.is_ema_aligned_bullish
         score = 0.0
@@ -171,16 +225,23 @@ class TechnicalSetupDetector:
             if adx >= 30.0:
                 score += 2.0
             if snap_1d.volume_surge_ratio >= 1.2:
-                score += 2.0
+                score += 1.5
+            if snap_1d.is_above_vwap:
+                score += 1.0
 
-        desc = f"Momentum continuation with ADX {adx:.1f} and strong DI+ dominance"
+        setup_reason = f"Bullish momentum continuation (ADX {adx:.1f})"
+        conf_reason = f"DI+ dominance ({di_p:.1f} > {di_m:.1f}) and price > VWAP"
+
         return SetupEvaluation(
             setup_type=SignalType.MOMENTUM_CONTINUATION,
             is_triggered=is_triggered,
             quality_score=min(score, 15.0),
-            description=desc,
+            description=f"{setup_reason} ({conf_reason})",
             trigger_price=price,
             key_level=snap_1d.ema_20 or price,
+            setup_reason=setup_reason,
+            confirmation_reason=conf_reason,
+            rejection_risks=risks,
         )
 
     def _detect_reversal(
@@ -188,16 +249,17 @@ class TechnicalSetupDetector:
         snap_1d: IndicatorSnapshot,
         snap_15m: IndicatorSnapshot | None = None,
     ) -> SetupEvaluation:
-        """Highly selective reversal setup at major daily support with RSI divergence."""
+        """Highly selective reversal setup at major daily support with RSI turning."""
         price = snap_1d.last_price
         support = snap_1d.support_20 or price
         rsi = snap_1d.rsi or 50.0
         volume_surge = snap_1d.volume_surge_ratio
 
-        # Never trigger reversal just because RSI is low; must have volume spike + support touch
-        at_support = abs(price - support) / support * 100.0 <= 1.0
-        oversold_turning = 30.0 <= rsi <= 42.0 and snap_1d.macd_hist and snap_1d.macd_hist > 0
-        volume_confirmed = volume_surge >= 1.5
+        risks: list[str] = ["Counter-trend setup: higher structural failure risk"]
+
+        at_support = abs(price - support) / support * 100.0 <= 1.2
+        oversold_turning = 32.0 <= rsi <= 44.0 and snap_1d.macd_hist and snap_1d.macd_hist > 0
+        volume_confirmed = volume_surge >= 1.4
 
         is_triggered = at_support and oversold_turning and volume_confirmed
         score = 0.0
@@ -209,12 +271,17 @@ class TechnicalSetupDetector:
             if snap_1d.bb_pct_b and snap_1d.bb_pct_b < 0.2:
                 score += 2.0
 
-        desc = f"Selective reversal test at major support ₹{support:.2f} with volume surge"
+        setup_reason = f"Reversal bounce at major support ₹{support:.2f}"
+        conf_reason = f"Oversold turn with {volume_surge:.1f}x capitulation volume and expanding MACD hist"
+
         return SetupEvaluation(
             setup_type=SignalType.REVERSAL,
             is_triggered=is_triggered,
             quality_score=min(score, 15.0),
-            description=desc,
+            description=f"{setup_reason} ({conf_reason})",
             trigger_price=price,
             key_level=support,
+            setup_reason=setup_reason,
+            confirmation_reason=conf_reason,
+            rejection_risks=risks,
         )

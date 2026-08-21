@@ -46,7 +46,7 @@ export const SignalDetailModal: React.FC<SignalDetailModalProps> = ({ signal, on
           border: '1px solid #374151',
           borderRadius: '14px',
           width: '100%',
-          maxWidth: '680px',
+          maxWidth: '700px',
           maxHeight: '90vh',
           overflowY: 'auto',
           padding: '24px',
@@ -66,7 +66,7 @@ export const SignalDetailModal: React.FC<SignalDetailModalProps> = ({ signal, on
           }}
         >
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '24px', fontWeight: 800, color: '#F9FAFB' }}>
                 {signal.symbol.replace('.NS', '')}
               </span>
@@ -94,6 +94,18 @@ export const SignalDetailModal: React.FC<SignalDetailModalProps> = ({ signal, on
               >
                 {signal.strength}
               </span>
+              <span
+                style={{
+                  padding: '3px 10px',
+                  backgroundColor: signal.confidence === 'HIGH' ? '#065F46' : '#1E3A8A',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  color: signal.confidence === 'HIGH' ? '#34D399' : '#93C5FD',
+                }}
+              >
+                {signal.confidence || 'MEDIUM'} CONFIDENCE
+              </span>
             </div>
             <div style={{ fontSize: '13px', color: '#9CA3AF', marginTop: '4px' }}>
               Setup: <strong>{signal.signal_type.replace('_', ' ')}</strong> | Timeframes: {signal.timeframes_summary}
@@ -111,7 +123,7 @@ export const SignalDetailModal: React.FC<SignalDetailModalProps> = ({ signal, on
         {/* Trade Geometry Plan */}
         <div style={{ marginBottom: '20px' }}>
           <h4 style={{ fontSize: '13px', color: '#9CA3AF', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            Execution Geometry & R:R Plan
+            Execution Geometry & Structural Levels
           </h4>
           <div
             style={{
@@ -157,7 +169,7 @@ export const SignalDetailModal: React.FC<SignalDetailModalProps> = ({ signal, on
         {/* 8-Dimension Score Breakdown */}
         <div style={{ marginBottom: '20px' }}>
           <h4 style={{ fontSize: '13px', color: '#9CA3AF', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            Score Breakdown (100-Point Model)
+            Score Breakdown (100-Point Institutional Model)
           </h4>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {scoreDimensions.map((dim, i) => {
@@ -194,10 +206,10 @@ export const SignalDetailModal: React.FC<SignalDetailModalProps> = ({ signal, on
           </div>
         </div>
 
-        {/* Rationale List */}
+        {/* Trade Rationale */}
         <div style={{ marginBottom: '20px' }}>
           <h4 style={{ fontSize: '13px', color: '#9CA3AF', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            Institutional Confluence Rationale
+            Trade Confluence & Confirmation Checklist
           </h4>
           <div
             style={{
@@ -217,6 +229,33 @@ export const SignalDetailModal: React.FC<SignalDetailModalProps> = ({ signal, on
             ))}
           </div>
         </div>
+
+        {/* Risk Warnings & Extension Checks */}
+        {signal.rejection_risks && signal.rejection_risks.length > 0 && (
+          <div style={{ marginBottom: '20px' }}>
+            <h4 style={{ fontSize: '13px', color: '#F87171', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              Identified Setup Risks & Warnings
+            </h4>
+            <div
+              style={{
+                padding: '14px',
+                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid #7F1D1D',
+                borderRadius: '10px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px',
+              }}
+            >
+              {signal.rejection_risks.map((w, i) => (
+                <div key={i} style={{ fontSize: '12px', color: '#FCA5A5', display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+                  <span>⚠️</span>
+                  <span>{w}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Close Button */}
         <button

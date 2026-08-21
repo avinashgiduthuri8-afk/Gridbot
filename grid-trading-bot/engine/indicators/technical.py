@@ -19,6 +19,7 @@ class IndicatorSnapshot:
     symbol: str
     timeframe: str
     last_price: float
+    open: float | None = None
 
     # Moving Averages
     ema_20: float | None = None
@@ -388,6 +389,7 @@ class TechnicalIndicatorEngine:
             symbol=symbol,
             timeframe=timeframe,
             last_price=last_price,
+            open=candles[-1].open if candles else last_price,
             ema_20=ema_20 if not math.isnan(ema_20) else None,
             ema_50=ema_50 if not math.isnan(ema_50) else None,
             ema_200=ema_200 if not math.isnan(ema_200) else None,

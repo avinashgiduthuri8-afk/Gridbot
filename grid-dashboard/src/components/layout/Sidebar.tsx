@@ -6,13 +6,6 @@ import {
   PieChart,
   Target,
   PlaySquare,
-  Grid,
-  Layers,
-  ListOrdered,
-  History,
-  BarChart3,
-  ShieldAlert,
-  Settings,
   TrendingUp,
   ChevronLeft,
   ChevronRight,
@@ -31,13 +24,6 @@ const NAV_ITEMS: { id: NavigationTab; label: string; icon: React.ReactNode }[] =
   { id: 'sectors', label: 'Sector Matrix', icon: <PieChart size={18} /> },
   { id: 'signals', label: 'Signals Log', icon: <Target size={18} /> },
   { id: 'backtest', label: 'Backtesting', icon: <PlaySquare size={18} /> },
-  { id: 'active-grids', label: 'Active Grids', icon: <Grid size={18} /> },
-  { id: 'positions', label: 'Positions', icon: <Layers size={18} /> },
-  { id: 'orders', label: 'Orders', icon: <ListOrdered size={18} /> },
-  { id: 'trade-history', label: 'Trade History', icon: <History size={18} /> },
-  { id: 'analytics', label: 'Analytics', icon: <BarChart3 size={18} /> },
-  { id: 'risk', label: 'Risk & Limits', icon: <ShieldAlert size={18} /> },
-  { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({

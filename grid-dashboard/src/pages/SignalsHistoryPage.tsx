@@ -177,6 +177,7 @@ export const SignalsHistoryPage: React.FC = () => {
                               total_score: s.score,
                               breakdown: s.breakdown,
                               risk_reward: {
+                                symbol: s.symbol,
                                 entry_price: s.entry_price,
                                 stop_loss: s.stop_loss,
                                 target_1: s.target_1,

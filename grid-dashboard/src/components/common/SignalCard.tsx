@@ -28,7 +28,19 @@ export const SignalCard: React.FC<SignalCardProps> = ({ signal, onViewDetails })
     }
   };
 
+  const getConfidenceBadge = (conf?: string) => {
+    switch (conf) {
+      case 'HIGH':
+        return { label: 'HIGH CONFIDENCE', color: '#10B981', bg: 'rgba(16, 185, 129, 0.15)' };
+      case 'MEDIUM':
+        return { label: 'MED CONFIDENCE', color: '#60A5FA', bg: 'rgba(96, 165, 250, 0.15)' };
+      default:
+        return { label: 'LOW CONFIDENCE', color: '#F59E0B', bg: 'rgba(245, 158, 11, 0.15)' };
+    }
+  };
+
   const badge = getStrengthBadge(signal.strength);
+  const confBadge = getConfidenceBadge(signal.confidence);
   const scoreColor = getScoreColor(signal.total_score);
 
   return (
@@ -49,7 +61,7 @@ export const SignalCard: React.FC<SignalCardProps> = ({ signal, onViewDetails })
       {/* Top Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '20px', fontWeight: 800, color: '#F9FAFB' }}>
               {signal.symbol.replace('.NS', '')}
             </span>
@@ -65,8 +77,20 @@ export const SignalCard: React.FC<SignalCardProps> = ({ signal, onViewDetails })
             >
               {signal.sector}
             </span>
+            <span
+              style={{
+                fontSize: '10px',
+                padding: '2px 6px',
+                borderRadius: '4px',
+                fontWeight: 700,
+                color: confBadge.color,
+                backgroundColor: confBadge.bg,
+              }}
+            >
+              {confBadge.label}
+            </span>
           </div>
-          <div style={{ fontSize: '12px', color: '#9CA3AF', marginTop: '2px' }}>
+          <div style={{ fontSize: '12px', color: '#9CA3AF', marginTop: '4px' }}>
             {signal.signal_type.replace('_', ' ')} • R:R {signal.risk_reward.rr_ratio}x
           </div>
         </div>
@@ -134,7 +158,7 @@ export const SignalCard: React.FC<SignalCardProps> = ({ signal, onViewDetails })
         </div>
       </div>
 
-      {/* Rationale Bullet Snippets */}
+      {/* Structured Rationale Snippets */}
       <div style={{ marginBottom: '14px', flexGrow: 1 }}>
         {signal.rationale.slice(0, 2).map((r, i) => (
           <div
@@ -152,6 +176,24 @@ export const SignalCard: React.FC<SignalCardProps> = ({ signal, onViewDetails })
             <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r}</span>
           </div>
         ))}
+
+        {signal.rejection_risks && signal.rejection_risks.length > 0 && (
+          <div
+            style={{
+              fontSize: '11px',
+              color: '#FCA5A5',
+              marginTop: '6px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+            }}
+          >
+            <span>⚠️</span>
+            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {signal.rejection_risks[0]}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Action Footer */}

@@ -8,11 +8,11 @@ Stage 4: Sector Strength & Momentum Matrix
 Stage 5: Multi-Timeframe Data Ingestion (1D, 1H, 15M)
 Stage 6: Technical Indicator Engine & Confluence
 Stage 7: Setup Pattern Identification (Breakout/Pullback/Continuation/Reversal)
-Stage 8: Relative Strength Alpha Calculation
-Stage 9: News Sentiment & Corporate Event Filter
-Stage 10: Risk/Reward Geometry Calculation (Enforcing R:R >= 2.0)
-Stage 11: 100-Point Weighted Scoring & Tier Classification
-Stage 12: Ranking & Selection of Top 1–3 High-Conviction Signals
+Stage 8: Relative Strength Alpha Calculation (vs NIFTY & Sector)
+Stage 9: News Sentiment & Corporate Event Risk Filter
+Stage 10: Extension & Chasing Filter (ATR distance checks)
+Stage 11: Structural Risk/Reward Geometry Calculation (Enforcing R:R >= 2.0)
+Stage 12: 100-Point Weighted Scoring, Confidence Calibration & Deduplication
 """
 
 from __future__ import annotations
@@ -28,10 +28,12 @@ from engine.indicators.technical import TechnicalIndicatorEngine
 from engine.mtf.mtf_analyzer import MultiTimeframeAnalyzer
 from engine.regime.regime_detector import MarketRegimeAnalysis, MarketRegimeDetector
 from engine.relative_strength.rs_calculator import RelativeStrengthCalculator
+from engine.risk_reward.extension_filter import ExtensionFilter
 from engine.risk_reward.rr_calculator import RiskRewardCalculator
 from engine.sectors.sector_analyzer import SectorMatrixAnalysis, SectorStrengthAnalyzer
 from engine.sentiment.news_evaluator import NewsSentimentEvaluator
 from engine.session.session_manager import IndianSessionManager
+from engine.signals.lifecycle import SignalLifecycleManager
 from engine.signals.scoring import ScoredSignal, SignalScoringEngine
 from engine.signals.setups import TechnicalSetupDetector
 from engine.universe.universe_filter import LiquidityFilterConfig, StockUniverseFilter
@@ -75,8 +77,10 @@ class IndianStockScanner:
         self.rs_calculator = RelativeStrengthCalculator()
         self.sentiment_evaluator = NewsSentimentEvaluator()
         self.setup_detector = TechnicalSetupDetector()
+        self.extension_filter = ExtensionFilter()
         self.rr_calculator = RiskRewardCalculator(min_rr=min_rr)
         self.scoring_engine = SignalScoringEngine()
+        self.lifecycle_mgr = SignalLifecycleManager()
 
     async def scan(
         self,
@@ -88,12 +92,15 @@ class IndianStockScanner:
         start_time = datetime.now(timezone.utc)
         session_info = self.session_mgr.get_session_info()
 
+        # Prune expired signals from active cache
+        self.lifecycle_mgr.prune_expired()
+
         log.info("Starting Indian Stock Scan across %s (out_of_session=%s)...", universe_name, allow_out_of_session)
 
         # STAGES 3 & 4: Fetch Market Regime & Sector Matrix concurrently
         regime_task = self.regime_detector.detect_current_regime(self.provider)
         sectors_task = self.sector_analyzer.fetch_and_analyze(self.provider)
-        nifty_candles_task = self.provider.get_historical_ohlcv("^NSEI", "1d", 30)
+        nifty_candles_task = self.provider.get_historical_ohlcv("^NSEI", "1d", 50)
 
         regime, sector_matrix, nifty_candles = await asyncio.gather(
             regime_task, sectors_task, nifty_candles_task
@@ -126,7 +133,7 @@ class IndianStockScanner:
 
                     passed_liquidity_count += 1
 
-                    # STAGE 5 & 6: Fetch 1H and 15M candles concurrently
+                    # STAGE 5: Fetch 1H and 15M candles concurrently
                     c_1h_task = self.provider.get_historical_ohlcv(sym, "1h", 60)
                     c_15m_task = self.provider.get_historical_ohlcv(sym, "15m", 50)
                     news_task = self.provider.get_news(sym, 5)
@@ -151,17 +158,20 @@ class IndianStockScanner:
                     )
 
                     # STAGE 8: Relative Strength
-                    rs_metrics = self.rs_calculator.calculate_alpha(c_1d, nifty_candles)
+                    rs_metrics = self.rs_calculator.calculate_alpha(c_1d, nifty_candles, sym)
 
                     # STAGE 9: News / Sentiment
                     sentiment = self.sentiment_evaluator.evaluate_news(sym, news_items)
 
-                    # STAGE 10: Risk / Reward Plan
+                    # STAGE 10: Extension & Chasing Filter
+                    extension = self.extension_filter.evaluate_extension(sym, snap_1d, best_setup.key_level)
+
+                    # STAGE 11: Risk / Reward Plan
                     rr_plan = self.rr_calculator.calculate_plan(
                         sym, snap_1d.last_price, snap_1d, snap_15m, best_setup.setup_type.value
                     )
 
-                    # STAGE 11: 100-Point Weighted Scoring
+                    # STAGE 12: 100-Point Weighted Scoring & Hard Quality Gates
                     scored = self.scoring_engine.calculate_score(
                         symbol=sym,
                         snap_1d=snap_1d,
@@ -172,10 +182,19 @@ class IndianStockScanner:
                         rs_metrics=rs_metrics,
                         sentiment=sentiment,
                         rr_plan=rr_plan,
+                        extension=extension,
                         sector_name=sec_name,
                         sector_rank=sec_rank,
                     )
                     scored.timestamp = now_iso()
+
+                    # Deduplication Check
+                    is_dup, dup_reason = self.lifecycle_mgr.check_deduplication(
+                        sym, scored.risk_reward.entry_price, scored.total_score
+                    )
+                    if is_dup:
+                        scored.rejection_risks.append(f"Deduplicated: {dup_reason}")
+
                     return scored
 
                 except Exception as exc:
@@ -190,8 +209,8 @@ class IndianStockScanner:
             if isinstance(res, ScoredSignal):
                 scored_candidates.append(res)
 
-        # STAGE 11 & 12: Ranking & Filtering
-        # Sort by total_score descending
+        # STAGE 12: Strict Ranking & Quality Gating
+        # Sort candidates by total_score descending
         scored_candidates.sort(key=lambda s: s.total_score, reverse=True)
 
         top_signals: list[ScoredSignal] = []
@@ -201,6 +220,15 @@ class IndianStockScanner:
             if sig.is_tradable and sig.strength in (SignalStrength.VERY_STRONG, SignalStrength.STRONG):
                 if len(top_signals) < max_signals:
                     top_signals.append(sig)
+                    # Register active signal to prevent duplicates on next cycles
+                    self.lifecycle_mgr.register_signal(
+                        symbol=sig.symbol,
+                        signal_id=f"sig_{sig.symbol}_{int(datetime.now(timezone.utc).timestamp())}",
+                        entry_price=sig.risk_reward.entry_price,
+                        stop_loss=sig.risk_reward.stop_loss,
+                        target_1=sig.risk_reward.target_1,
+                        score=sig.total_score,
+                    )
                 else:
                     watchlist.append(sig)
             elif sig.strength in (SignalStrength.VALID, SignalStrength.WATCHLIST):

@@ -1,4 +1,4 @@
-"""Weighted Signal Scoring Engine for Indian Equities.
+"""Weighted Signal Scoring & Quality Gate Engine for Indian Equities.
 
 Evaluates candidates across 8 distinct institutional dimensions (Total 100 points):
 1. Technical Trend (20 pts)
@@ -10,7 +10,12 @@ Evaluates candidates across 8 distinct institutional dimensions (Total 100 point
 7. Sector Strength & Alpha (5 pts)
 8. News & Corporate Sentiment (5 pts)
 
-Classifies setups into VERY_STRONG (90-100), STRONG (80-89), VALID (70-79), WATCHLIST (60-69), REJECT (<60).
+Applies hard pre-scoring rejection gates:
+- Extreme Overextension (ATR distance) -> REJECT
+- R:R < 2.0 or Overhead Resistance Cap -> REJECT
+- Multi-Timeframe Conflict (Counter-trend) -> REJECT
+- Adverse Corporate News / Event Risk -> REJECT
+- Hostile Market Regime -> REJECT / Heavy Cap
 """
 
 from __future__ import annotations
@@ -18,11 +23,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from config.constants import DEFAULT_SCANNER_WEIGHTS, SCORE_THRESHOLDS, SignalStrength, SignalType
+from config.constants import DEFAULT_SCANNER_WEIGHTS, SCORE_THRESHOLDS, MarketRegime, SignalStrength, SignalType
 from engine.indicators.technical import IndicatorSnapshot
 from engine.mtf.mtf_analyzer import MTFAnalysis
 from engine.regime.regime_detector import MarketRegimeAnalysis
 from engine.relative_strength.rs_calculator import RelativeStrengthMetrics
+from engine.risk_reward.extension_filter import ExtensionMetrics
 from engine.risk_reward.rr_calculator import RiskRewardPlan
 from engine.sentiment.news_evaluator import SentimentAnalysis
 from engine.signals.setups import SetupEvaluation
@@ -60,7 +66,7 @@ class ScoreBreakdown:
 
 @dataclass
 class ScoredSignal:
-    """Final candidate signal with full rationale, geometry, and score."""
+    """Final candidate signal with full rationale, geometry, confidence, and risks."""
     symbol: str
     signal_type: SignalType
     strength: SignalStrength
@@ -68,20 +74,30 @@ class ScoredSignal:
     breakdown: ScoreBreakdown
     risk_reward: RiskRewardPlan
 
+    confidence: str = "MEDIUM"        # HIGH, MEDIUM, LOW
+    lifecycle_state: str = "CONFIRMED"# WATCH, SETUP, CONFIRMED, REJECTED
     sector: str = "General"
     sector_rank: int = 0
     market_regime: str = "NEUTRAL"
     timeframes_summary: str = ""
+    setup_reason: str = ""
+    confirmation_reason: str = ""
     rationale: list[str] = field(default_factory=list)
+    rejection_risks: list[str] = field(default_factory=list)
+    extension: ExtensionMetrics | None = None
     timestamp: str = ""
 
     @property
     def is_tradable(self) -> bool:
-        return self.strength in (SignalStrength.VERY_STRONG, SignalStrength.STRONG, SignalStrength.VALID) and self.risk_reward.is_acceptable
+        return (
+            self.strength in (SignalStrength.VERY_STRONG, SignalStrength.STRONG)
+            and self.risk_reward.is_acceptable
+            and self.confidence in ("HIGH", "MEDIUM")
+        )
 
 
 class SignalScoringEngine:
-    """Calculates weighted signal scores and classifies setups."""
+    """Calculates weighted signal scores, enforces quality gates, and classifies confidence."""
 
     def __init__(self, weights: dict[str, float] | None = None) -> None:
         self.weights = weights or DEFAULT_SCANNER_WEIGHTS
@@ -97,11 +113,13 @@ class SignalScoringEngine:
         rs_metrics: RelativeStrengthMetrics,
         sentiment: SentimentAnalysis,
         rr_plan: RiskRewardPlan,
+        extension: ExtensionMetrics | None = None,
         sector_name: str = "General",
         sector_rank: int = 0,
     ) -> ScoredSignal:
-        """Evaluates all dimensions and constructs the ScoredSignal."""
+        """Evaluates all dimensions, enforces hard quality gates, and constructs ScoredSignal."""
         rationale: list[str] = []
+        risks: list[str] = list(setup.rejection_risks)
 
         # 1. Technical Trend (Max 20 pts)
         trend_pts = 0.0
@@ -168,15 +186,21 @@ class SignalScoringEngine:
         mtf_pts = min(mtf.confluence_score, 15.0)
         if mtf.is_aligned_bullish:
             rationale.append("Triple Timeframe Alignment (1D + 1H + 15M Bullish)")
+        elif mtf.trend_1d == "BEARISH" and setup.setup_type != SignalType.REVERSAL:
+            risks.append("Counter-trend: Trading against Daily Bearish Trend")
 
         # 6. Market Regime Fit (Max 10 pts)
         regime_pts = min(regime.regime_score, 10.0)
         rationale.append(f"Market Regime: {regime.regime.value} ({regime.summary})")
+        if regime.regime in (MarketRegime.STRONG_BEARISH, MarketRegime.HIGH_VOLATILITY):
+            risks.append(f"Hostile market regime: {regime.regime.value}")
 
         # 7. Sector Strength (Max 5 pts)
         sec_pts = min(sector_score, 5.0)
         if sec_pts >= 4.0:
             rationale.append(f"Sector Outperformance: {sector_name} (Rank #{sector_rank})")
+        elif sec_pts <= 2.0:
+            risks.append(f"Sector Laggard: {sector_name} underperforming benchmark")
 
         # 8. News & Corporate Sentiment (Max 5 pts)
         news_pts = min(sentiment.score, 5.0)
@@ -185,29 +209,67 @@ class SignalScoringEngine:
 
         # Total Raw Score
         raw_total = trend_pts + mom_pts + vol_pts + pa_pts + mtf_pts + regime_pts + sec_pts + news_pts
-
-        # Apply Regime and Sentiment Multipliers
         final_score = raw_total * regime.long_confidence_multiplier
-        if sentiment.is_vetoed:
+
+        # HARD PRE-SCORING QUALITY GATES
+        is_hard_vetoed = False
+
+        if extension and extension.is_overextended:
+            is_hard_vetoed = True
             final_score = 0.0
-            rationale.append("⚠️ TRADE VETOED: Adverse news or event risk")
-        elif not rr_plan.is_acceptable:
-            final_score = min(final_score, 59.0)  # Cannot be VALID if R:R is rejected
-            rationale.append(f"⚠️ R:R Rejected: {rr_plan.rejection_reason}")
+            risks.append(f"⚠️ OVEREXTENDED: {extension.warning_message}")
+
+        if sentiment.is_vetoed:
+            is_hard_vetoed = True
+            final_score = 0.0
+            risks.append("⚠️ EVENT RISK: Vetoed due to adverse corporate news or earnings volatility")
+
+        if not rr_plan.is_acceptable:
+            is_hard_vetoed = True
+            final_score = min(final_score, 55.0)  # Cannot qualify if R:R is rejected
+            risks.append(f"⚠️ R:R REJECTED: {rr_plan.rejection_reason}")
+
+        if mtf.trend_1d == "BEARISH" and setup.setup_type not in (SignalType.REVERSAL,):
+            # Counter-trend against daily bear market
+            final_score = min(final_score, 50.0)
 
         final_score = max(0.0, min(100.0, round(final_score, 1)))
 
         # Tier Classification
-        if final_score >= SCORE_THRESHOLDS["VERY_STRONG"]:
+        if is_hard_vetoed:
+            strength = SignalStrength.REJECT
+            lifecycle_state = "REJECTED"
+        elif final_score >= SCORE_THRESHOLDS["VERY_STRONG"]:
             strength = SignalStrength.VERY_STRONG
+            lifecycle_state = "CONFIRMED"
         elif final_score >= SCORE_THRESHOLDS["STRONG"]:
             strength = SignalStrength.STRONG
+            lifecycle_state = "CONFIRMED"
         elif final_score >= SCORE_THRESHOLDS["VALID"]:
             strength = SignalStrength.VALID
+            lifecycle_state = "SETUP"
         elif final_score >= SCORE_THRESHOLDS["WATCHLIST"]:
             strength = SignalStrength.WATCHLIST
+            lifecycle_state = "WATCH"
         else:
             strength = SignalStrength.REJECT
+            lifecycle_state = "REJECTED"
+
+        # Statistical Confidence Calibration
+        if is_hard_vetoed:
+            confidence = "LOW"
+        elif (
+            final_score >= 85.0
+            and mtf.is_aligned_bullish
+            and rr_plan.rr_ratio >= 2.0
+            and regime.regime in (MarketRegime.STRONG_BULLISH, MarketRegime.BULLISH)
+            and len(risks) == 0
+        ):
+            confidence = "HIGH"
+        elif final_score >= 75.0 and rr_plan.is_acceptable:
+            confidence = "MEDIUM"
+        else:
+            confidence = "LOW"
 
         breakdown = ScoreBreakdown(
             technical_trend=trend_pts,
@@ -230,9 +292,15 @@ class SignalScoringEngine:
             total_score=final_score,
             breakdown=breakdown,
             risk_reward=rr_plan,
+            confidence=confidence,
+            lifecycle_state=lifecycle_state,
             sector=sector_name,
             sector_rank=sector_rank,
             market_regime=regime.regime.value,
             timeframes_summary=tf_summary,
+            setup_reason=setup.setup_reason,
+            confirmation_reason=setup.confirmation_reason,
             rationale=rationale,
+            rejection_risks=risks,
+            extension=extension,
         )

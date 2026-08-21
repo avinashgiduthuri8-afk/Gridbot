@@ -1,7 +1,7 @@
 """Signal & Backtest Repository for SQLite persistence.
 
 Handles saving scored signals, tracking MFE/MAE excursions, status transitions,
-and querying historical performance analytics.
+deduplication queries, and querying historical performance analytics.
 """
 
 from __future__ import annotations
@@ -34,6 +34,16 @@ class SignalRepository:
             status, mfe, mae, outcome_pnl_pct, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
+
+        # Structured rationale payload preserving compatibility
+        rationale_payload = {
+            "bullets": sig.rationale,
+            "setup_reason": sig.setup_reason,
+            "confirmation_reason": sig.confirmation_reason,
+            "rejection_risks": sig.rejection_risks,
+            "confidence": sig.confidence,
+        }
+
         params = (
             signal_id,
             sig.symbol,
@@ -48,9 +58,9 @@ class SignalRepository:
             str(sig.market_regime),
             str(sig.sector),
             str(sig.timeframes_summary),
-            json.dumps(sig.rationale),
+            json.dumps(rationale_payload),
             json.dumps(sig.breakdown.to_dict()),
-            "OPEN",
+            sig.lifecycle_state or "OPEN",
             0.0,
             0.0,
             0.0,
@@ -85,7 +95,21 @@ class SignalRepository:
             results = []
             for r in rows:
                 d = dict(r)
-                d["rationale"] = json.loads(d["rationale_json"]) if d.get("rationale_json") else []
+                if d.get("rationale_json"):
+                    parsed_rat = json.loads(d["rationale_json"])
+                    if isinstance(parsed_rat, dict):
+                        d["rationale"] = parsed_rat.get("bullets", [])
+                        d["setup_reason"] = parsed_rat.get("setup_reason", "")
+                        d["confirmation_reason"] = parsed_rat.get("confirmation_reason", "")
+                        d["rejection_risks"] = parsed_rat.get("rejection_risks", [])
+                        d["confidence"] = parsed_rat.get("confidence", "MEDIUM")
+                    else:
+                        d["rationale"] = parsed_rat
+                        d["confidence"] = "MEDIUM"
+                else:
+                    d["rationale"] = []
+                    d["confidence"] = "MEDIUM"
+
                 d["breakdown"] = json.loads(d["breakdown_json"]) if d.get("breakdown_json") else {}
                 results.append(d)
             return results
@@ -98,7 +122,21 @@ class SignalRepository:
             if not row:
                 return None
             d = dict(row)
-            d["rationale"] = json.loads(d["rationale_json"]) if d.get("rationale_json") else []
+            if d.get("rationale_json"):
+                parsed_rat = json.loads(d["rationale_json"])
+                if isinstance(parsed_rat, dict):
+                    d["rationale"] = parsed_rat.get("bullets", [])
+                    d["setup_reason"] = parsed_rat.get("setup_reason", "")
+                    d["confirmation_reason"] = parsed_rat.get("confirmation_reason", "")
+                    d["rejection_risks"] = parsed_rat.get("rejection_risks", [])
+                    d["confidence"] = parsed_rat.get("confidence", "MEDIUM")
+                else:
+                    d["rationale"] = parsed_rat
+                    d["confidence"] = "MEDIUM"
+            else:
+                d["rationale"] = []
+                d["confidence"] = "MEDIUM"
+
             d["breakdown"] = json.loads(d["breakdown_json"]) if d.get("breakdown_json") else {}
             return d
 
@@ -117,9 +155,9 @@ class SignalRepository:
         WHERE signal_id = ?
         """
         params = (status, mfe, mae, outcome_pnl_pct, now_iso(), signal_id)
-        async with self._db.connection.execute(sql, params) as cursor:
+        async with self._db.connection.execute(sql, params):
             await self._db.connection.commit()
-            return cursor.rowcount > 0
+            return True
 
     async def get_performance_summary(self) -> dict[str, Any]:
         """Calculates win rate, average R:R, and profit metrics from resolved signals."""
