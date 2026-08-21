@@ -106,4 +106,30 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ universe, lookback_bars: lookbackBars }),
     }),
+
+  // Stock Fundamentals & NSE Delivery APIs
+  getStockInfo: (symbol: string, forceRefresh = false) =>
+    fetchApi<any>(`/stocks/${encodeURIComponent(symbol)}/info${forceRefresh ? '?force_refresh=true' : ''}`),
+
+  getStockRatios: (symbol: string) =>
+    fetchApi<any>(`/stocks/${encodeURIComponent(symbol)}/ratios`),
+
+  getStockDelivery: (symbol: string) =>
+    fetchApi<any>(`/stocks/${encodeURIComponent(symbol)}/delivery`),
+
+  getBatchStockInfo: (symbols: string[]) =>
+    fetchApi<Record<string, any>>(`/stocks/batch-info?symbols=${encodeURIComponent(symbols.join(','))}`),
+
+  // Signal Ledger & R-Multiple APIs
+  getLedgerStats: () =>
+    fetchApi<any>('/ledger/stats'),
+
+  getActiveLedgerSignals: () =>
+    fetchApi<any[]>('/ledger/active'),
+
+  evaluateLedger: (quotes: Record<string, number>) =>
+    fetchApi<any>('/ledger/evaluate', {
+      method: 'POST',
+      body: JSON.stringify(quotes),
+    }),
 };

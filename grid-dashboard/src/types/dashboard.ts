@@ -198,3 +198,105 @@ export interface HealthResponse {
   status: string;
   database_connected: boolean;
 }
+
+export interface CorporateEvent {
+  event_type: string;
+  date: string;
+  description: string;
+}
+
+export interface StockInfoResponse {
+  symbol: string;
+  company_name: string;
+  sector: string;
+  industry: string;
+  isin: string;
+  market_cap_category: 'Large Cap' | 'Mid Cap' | 'Small Cap' | string;
+  website: string;
+  business_summary: string;
+
+  market_cap_cr: number;
+  current_price: number;
+  high_52w: number;
+  low_52w: number;
+  stock_pe: number;
+  industry_pe: number;
+  book_value: number;
+  price_to_book: number;
+  dividend_yield_pct: number;
+  roce_pct: number;
+  roe_pct: number;
+  debt_to_equity: number;
+  interest_coverage: number;
+  eps_ttm: number;
+  peg_ratio: number;
+  free_cash_flow_cr: number;
+
+  delivery_pct: number;
+  delivery_quantity: number;
+  traded_volume: number;
+  upper_circuit: number;
+  lower_circuit: number;
+  circuit_band_pct: number;
+  total_buy_qty: number;
+  total_sell_qty: number;
+  upcoming_events: CorporateEvent[];
+
+  promoter_holding_pct: number;
+  pledged_pct: number;
+  fii_holding_pct: number;
+  dii_holding_pct: number;
+  public_holding_pct: number;
+  promoter_trend: 'INCREASING' | 'STABLE' | 'DECREASING' | string;
+  last_updated: string;
+}
+
+export interface FinancialRatiosResponse {
+  symbol: string;
+  company_name: string;
+  market_cap_cr: number;
+  market_cap_category: string;
+  current_price: number;
+  stock_pe: number;
+  industry_pe: number;
+  book_value: number;
+  price_to_book: number;
+  dividend_yield_pct: number;
+  roce_pct: number;
+  roe_pct: number;
+  debt_to_equity: number;
+  interest_coverage: number;
+  eps_ttm: number;
+  peg_ratio: number;
+  free_cash_flow_cr: number;
+  promoter_holding_pct: number;
+  pledged_pct: number;
+}
+
+export interface DeliveryInfoResponse {
+  symbol: string;
+  delivery_pct: number;
+  delivery_quantity: number;
+  traded_volume: number;
+  upper_circuit: number;
+  lower_circuit: number;
+  circuit_band_pct: number;
+  total_buy_qty: number;
+  total_sell_qty: number;
+  upcoming_events: CorporateEvent[];
+}
+
+export interface LedgerStatsResponse {
+  total_signals: number;
+  winning_signals: number;
+  losing_signals: number;
+  expired_signals: number;
+  active_signals: number;
+  win_rate_pct: number;
+  total_r_multiple: number;
+  profit_factor: number;
+  avg_r_per_trade: number;
+  avg_mfe_pct: number;
+  avg_mae_pct: number;
+  setup_breakdown: Record<string, { total: number; wins: number; losses: number; total_r: number }>;
+}

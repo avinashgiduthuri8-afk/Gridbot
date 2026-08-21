@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from storage.database import Database
+from storage.repositories.signal_ledger import SignalLedgerRepository
 from storage.repositories.signals import SignalRepository
 
 __all__ = [
     "SignalRepository",
+    "SignalLedgerRepository",
     "Repositories",
 ]
 
@@ -17,3 +19,4 @@ class Repositories:
     def __init__(self, db: Database) -> None:
         self.db = db
         self.signals = SignalRepository(db)
+        self.ledger = SignalLedgerRepository(db)

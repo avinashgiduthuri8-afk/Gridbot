@@ -37,6 +37,8 @@ LOG_CHANNELS = (
     "backtest_evaluator",
     "signal_repo",
     "scanner_service",
+    "stock_info_provider",
+    "stock_info_router",
 )
 
 _LOG_FORMAT = (

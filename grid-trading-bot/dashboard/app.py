@@ -17,10 +17,12 @@ from fastapi.staticfiles import StaticFiles
 from api.routers import (
     backtest,
     health,
+    ledger,
     regime,
     scanner,
     sectors,
     signals,
+    stock_info,
 )
 from dashboard.config import load_dashboard_settings
 from services.scanner_service import ScannerService
@@ -102,8 +104,14 @@ def create_app() -> FastAPI:
         sectors,
         signals,
         backtest,
+        stock_info,
+        ledger,
     ):
         app.include_router(router_module.router, prefix="/api")
+
+    # Also mount stock_info and ledger under /api/v1 for v1 path parity
+    app.include_router(stock_info.router, prefix="/api/v1")
+    app.include_router(ledger.router, prefix="/api/v1")
 
     static_dir = dashboard_settings.static_dir
     index_path = Path(static_dir) / "index.html" if static_dir else None
