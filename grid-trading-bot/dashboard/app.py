@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from api.routers import (
     backtest,
+    dispatch,
     health,
     ledger,
     regime,
@@ -106,12 +107,14 @@ def create_app() -> FastAPI:
         backtest,
         stock_info,
         ledger,
+        dispatch,
     ):
         app.include_router(router_module.router, prefix="/api")
 
-    # Also mount stock_info and ledger under /api/v1 for v1 path parity
+    # Also mount stock_info, ledger, and dispatch under /api/v1 for v1 path parity
     app.include_router(stock_info.router, prefix="/api/v1")
     app.include_router(ledger.router, prefix="/api/v1")
+    app.include_router(dispatch.router, prefix="/api/v1")
 
     static_dir = dashboard_settings.static_dir
     index_path = Path(static_dir) / "index.html" if static_dir else None

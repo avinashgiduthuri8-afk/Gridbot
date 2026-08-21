@@ -7,6 +7,7 @@ import {
   Target,
   PlaySquare,
   TrendingUp,
+  Bot,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
@@ -24,6 +25,7 @@ const NAV_ITEMS: { id: NavigationTab; label: string; icon: React.ReactNode }[] =
   { id: 'sectors', label: 'Sector Matrix', icon: <PieChart size={18} /> },
   { id: 'signals', label: 'Signals Log', icon: <Target size={18} /> },
   { id: 'backtest', label: 'Backtesting', icon: <PlaySquare size={18} /> },
+  { id: 'bots', label: 'Execution Bots', icon: <Bot size={18} /> },
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({

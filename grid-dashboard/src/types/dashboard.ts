@@ -3,7 +3,8 @@ export type NavigationTab =
   | 'scanner'
   | 'sectors'
   | 'signals'
-  | 'backtest';
+  | 'backtest'
+  | 'bots';
 
 export type StatusType =
   | 'active'
@@ -299,4 +300,37 @@ export interface LedgerStatsResponse {
   avg_mfe_pct: number;
   avg_mae_pct: number;
   setup_breakdown: Record<string, { total: number; wins: number; losses: number; total_r: number }>;
+}
+
+export interface BotRegistrationResponse {
+  bot_id: string;
+  name: string;
+  target_broker: string;
+  webhook_url: string;
+  secret_key: string;
+  subscribed_setups: string[];
+  min_confidence_score: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface CreateBotRequest {
+  name: string;
+  target_broker: string;
+  webhook_url: string;
+  secret_key?: string;
+  subscribed_setups: string[];
+  min_confidence_score: number;
+  is_active: boolean;
+}
+
+export interface DispatchReceiptResponse {
+  dispatch_id: string;
+  signal_id: string;
+  bot_id: string;
+  timestamp: string;
+  status: 'SUCCESS' | 'FAILED' | 'RETRYING' | string;
+  response_code: number;
+  latency_ms: number;
+  error_message?: string | null;
 }

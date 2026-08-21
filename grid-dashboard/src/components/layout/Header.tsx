@@ -17,6 +17,7 @@ const TAB_TITLES: Record<NavigationTab, string> = {
   sectors: 'Sector Strength & Momentum',
   signals: 'Signals Log & MFE/MAE History',
   backtest: 'Scanner Backtesting Suite',
+  bots: 'Master Signal Dispatcher & Execution Bots',
 };
 
 export const Header: React.FC<HeaderProps> = ({

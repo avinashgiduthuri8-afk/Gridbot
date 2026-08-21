@@ -59,6 +59,35 @@ CREATE TABLE IF NOT EXISTS signal_backtests (
     created_at          TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS registered_bots (
+    bot_id              TEXT PRIMARY KEY,
+    name                TEXT NOT NULL,
+    target_broker       TEXT NOT NULL,
+    webhook_url         TEXT NOT NULL,
+    secret_key          TEXT NOT NULL,
+    subscribed_setups   TEXT NOT NULL,
+    min_confidence_score REAL NOT NULL DEFAULT 75.0,
+    is_active           INTEGER NOT NULL DEFAULT 1,
+    created_at          TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_registered_bots_active ON registered_bots(is_active);
+
+CREATE TABLE IF NOT EXISTS dispatch_receipts (
+    dispatch_id         TEXT PRIMARY KEY,
+    signal_id           TEXT NOT NULL,
+    bot_id              TEXT NOT NULL,
+    timestamp           TEXT NOT NULL,
+    status              TEXT NOT NULL,
+    response_code       INTEGER NOT NULL DEFAULT 0,
+    latency_ms          REAL NOT NULL DEFAULT 0.0,
+    error_message       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_dispatch_receipts_signal ON dispatch_receipts(signal_id);
+CREATE INDEX IF NOT EXISTS idx_dispatch_receipts_bot ON dispatch_receipts(bot_id);
+CREATE INDEX IF NOT EXISTS idx_dispatch_receipts_time ON dispatch_receipts(timestamp);
+
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY
 );

@@ -132,4 +132,27 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(quotes),
     }),
+
+  // Execution Bots & Webhook Dispatch APIs
+  getRegisteredBots: (activeOnly = false) =>
+    fetchApi<any[]>(`/dispatch/bots${activeOnly ? '?active_only=true' : ''}`),
+
+  registerBot: (bot: any) =>
+    fetchApi<any>('/dispatch/bots', {
+      method: 'POST',
+      body: JSON.stringify(bot),
+    }),
+
+  deleteBot: (botId: string) =>
+    fetchApi<any>(`/dispatch/bots/${encodeURIComponent(botId)}`, {
+      method: 'DELETE',
+    }),
+
+  testPingBot: (botId: string) =>
+    fetchApi<any>(`/dispatch/test-ping/${encodeURIComponent(botId)}`, {
+      method: 'POST',
+    }),
+
+  getDispatchLogs: (limit = 50) =>
+    fetchApi<any[]>(`/dispatch/logs?limit=${limit}`),
 };

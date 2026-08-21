@@ -12,6 +12,7 @@ from typing import Any
 
 from engine.session.session_manager import IndianSessionManager
 from engine.signals.scanner import IndianStockScanner, ScanResult
+from services.signal_dispatcher import SignalDispatcherService
 from services.telegram_notifier import TelegramNotifier
 from storage.repositories.signals import SignalRepository
 from utils.helpers import now_iso
@@ -28,6 +29,7 @@ class ScannerDaemon:
         scanner: IndianStockScanner,
         repo: SignalRepository | None = None,
         notifier: TelegramNotifier | None = None,
+        dispatcher: SignalDispatcherService | None = None,
         interval_seconds: int = 900,         # 15 minutes default
         universe_name: str = "NIFTY_100",
         max_signals: int = 3,
@@ -35,6 +37,7 @@ class ScannerDaemon:
         self.scanner = scanner
         self.repo = repo
         self.notifier = notifier or TelegramNotifier()
+        self.dispatcher = dispatcher or SignalDispatcherService()
         self.session_mgr = IndianSessionManager()
         self.interval_seconds = interval_seconds
         self.universe_name = universe_name
@@ -90,6 +93,7 @@ class ScannerDaemon:
                         if self.repo:
                             await self.repo.save_signal(sig)
                         await self.notifier.send_signal_alert(sig)
+                        await self.dispatcher.dispatch_signal(sig)
                 else:
                     log.info("IST Market Closed (%s). Next check in %d seconds.", session_info["session_state"], self.interval_seconds)
 

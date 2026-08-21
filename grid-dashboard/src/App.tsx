@@ -5,6 +5,7 @@ import { ScannerPage } from './pages/ScannerPage';
 import { SectorsPage } from './pages/SectorsPage';
 import { SignalsHistoryPage } from './pages/SignalsHistoryPage';
 import { BacktestPage } from './pages/BacktestPage';
+import { BotsPage } from './pages/BotsPage';
 import { useDashboardData } from './hooks/useDashboardData';
 import type { NavigationTab } from './types/dashboard';
 
@@ -31,6 +32,8 @@ export function App() {
         return <SignalsHistoryPage />;
       case 'backtest':
         return <BacktestPage />;
+      case 'bots':
+        return <BotsPage />;
       default:
         return (
           <OverviewPage
