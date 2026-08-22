@@ -38,16 +38,16 @@ class MixedOrderManager:
                 grid_id,
             )
             return self._managers["paper"]
-        mode = grid.get("mode", "real")
-        manager = self._managers.get(mode)
-        if manager is None:
+        mode = grid.get("mode")
+        if mode == "real":
+            return self._managers["real"]
+        if mode != "paper":
             log.error(
-                "Unknown mode %r for grid %s — defaulting to paper to be safe",
+                "Unknown or missing mode %r for grid %s — defaulting to paper to be safe",
                 mode,
                 grid_id,
             )
-            return self._managers["paper"]
-        return manager
+        return self._managers["paper"]
 
     async def _manager_for_order(self, order_id: str) -> OrderManager:
         order = await self._repos.orders.get(order_id)

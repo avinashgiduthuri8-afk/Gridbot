@@ -232,6 +232,34 @@ async def test_unknown_missing_mode_defaults_safely_to_paper(isolated_repos):
     mgr_unknown = await mixed_mgr._manager_for_grid("grid_bad_mode")
     assert mgr_unknown is paper_order_mgr
 
+    # 3. Grid with empty string mode -> defaults to PAPER
+    await isolated_repos.grids.create(make_grid_record("grid_empty_mode", "SOLINR", mode=""))
+    mgr_empty = await mixed_mgr._manager_for_grid("grid_empty_mode")
+    assert mgr_empty is paper_order_mgr
+
+    # 4. Grid with uppercase REAL mode -> defaults to PAPER (strict lowercase match required)
+    await isolated_repos.grids.create(make_grid_record("grid_upper_real", "SOLINR", mode="REAL"))
+    mgr_upper = await mixed_mgr._manager_for_grid("grid_upper_real")
+    assert mgr_upper is paper_order_mgr
+
+    # 5. Grid with explicit paper mode -> PAPER
+    await isolated_repos.grids.create(make_grid_record("grid_paper_valid", "SOLINR", mode="paper"))
+    mgr_paper = await mixed_mgr._manager_for_grid("grid_paper_valid")
+    assert mgr_paper is paper_order_mgr
+
+    # 6. Only exact lowercase "real" reaches RealOrderManager
+    await isolated_repos.grids.create(make_grid_record("grid_real_valid", "SOLINR", mode="real"))
+    mgr_real = await mixed_mgr._manager_for_grid("grid_real_valid")
+    assert mgr_real is real_order_mgr
+
+    # 7. In-memory dict with None / missing mode key safely defaults to PAPER
+    with patch.object(isolated_repos.grids, "get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"grid_id": "grd_none", "mode": None}
+        assert await mixed_mgr._manager_for_grid("grd_none") is paper_order_mgr
+
+        mock_get.return_value = {"grid_id": "grd_missing"}  # no 'mode' key
+        assert await mixed_mgr._manager_for_grid("grd_missing") is paper_order_mgr
+
 
 # ------------------------------------------------------------------------------
 # 6. Database Mode Persistence Across Restart
