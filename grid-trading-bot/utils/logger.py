@@ -23,22 +23,6 @@ LOG_CHANNELS = (
     "grid",
     "errors",
     "drive_backup",
-    "scanner",
-    "yahoo_provider",
-    "universe_filter",
-    "mtf_analyzer",
-    "regime_detector",
-    "sector_analyzer",
-    "news_evaluator",
-    "risk_reward",
-    "setup_detector",
-    "scoring_engine",
-    "scanner_pipeline",
-    "backtest_evaluator",
-    "signal_repo",
-    "scanner_service",
-    "stock_info_provider",
-    "stock_info_router",
 )
 
 _LOG_FORMAT = (
@@ -72,10 +56,6 @@ def setup_logging(log_dir: str = "logs", level: str = "INFO") -> None:
     root_logger.addHandler(console_handler)
     root_logger.propagate = False
 
-    class _ErrorRelayFilter(logging.Filter):
-        def filter(self, record: logging.LogRecord) -> bool:
-            return record.levelno >= logging.WARNING
-
     for channel in LOG_CHANNELS:
         channel_logger = logging.getLogger(f"grid_bot.{channel}")
         channel_logger.setLevel(root_level)
@@ -83,17 +63,38 @@ def setup_logging(log_dir: str = "logs", level: str = "INFO") -> None:
 
         file_handler = logging.handlers.RotatingFileHandler(
             log_path / f"{channel}.log",
-            maxBytes=10 * 1024 * 1024,
+            maxBytes=5 * 1024 * 1024,
             backupCount=5,
             encoding="utf-8",
         )
         file_handler.setFormatter(formatter)
         file_handler.setLevel(root_level)
         channel_logger.addHandler(file_handler)
+        channel_logger.addHandler(console_handler)
+        channel_logger.propagate = False
 
+    # Errors channel additionally captures WARNING+ from every other channel.
+    errors_logger = logging.getLogger("grid_bot.errors")
+    error_relay = logging.handlers.RotatingFileHandler(
+        log_path / "errors.log",
+        maxBytes=5 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    error_relay.setFormatter(formatter)
+    error_relay.setLevel(logging.WARNING)
+
+    class _ErrorRelayFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            return record.levelno >= logging.WARNING
+
+    for channel in LOG_CHANNELS:
+        if channel == "errors":
+            continue
+        channel_logger = logging.getLogger(f"grid_bot.{channel}")
         relay = logging.handlers.RotatingFileHandler(
             log_path / "errors.log",
-            maxBytes=10 * 1024 * 1024,
+            maxBytes=5 * 1024 * 1024,
             backupCount=5,
             encoding="utf-8",
         )

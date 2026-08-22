@@ -2,11 +2,13 @@ import React from 'react';
 import type { NavigationTab } from '../../types/dashboard';
 import {
   LayoutDashboard,
-  Search,
-  PieChart,
-  Target,
-  PlaySquare,
-  TrendingUp,
+  Grid,
+  Layers,
+  ListOrdered,
+  History,
+  BarChart3,
+  ShieldAlert,
+  Settings,
   Bot,
   ChevronLeft,
   ChevronRight,
@@ -21,11 +23,13 @@ interface SidebarProps {
 
 const NAV_ITEMS: { id: NavigationTab; label: string; icon: React.ReactNode }[] = [
   { id: 'overview', label: 'Overview', icon: <LayoutDashboard size={18} /> },
-  { id: 'scanner', label: 'Stock Scanner', icon: <Search size={18} /> },
-  { id: 'sectors', label: 'Sector Matrix', icon: <PieChart size={18} /> },
-  { id: 'signals', label: 'Signals Log', icon: <Target size={18} /> },
-  { id: 'backtest', label: 'Backtesting', icon: <PlaySquare size={18} /> },
-  { id: 'bots', label: 'Execution Bots', icon: <Bot size={18} /> },
+  { id: 'active-grids', label: 'Active Grids', icon: <Grid size={18} /> },
+  { id: 'positions', label: 'Positions', icon: <Layers size={18} /> },
+  { id: 'orders', label: 'Orders', icon: <ListOrdered size={18} /> },
+  { id: 'trade-history', label: 'Trade History', icon: <History size={18} /> },
+  { id: 'analytics', label: 'Analytics', icon: <BarChart3 size={18} /> },
+  { id: 'risk', label: 'Risk & Limits', icon: <ShieldAlert size={18} /> },
+  { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -39,9 +43,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="sidebar-header">
         <div className="brand-title">
           <div className="brand-icon">
-            <TrendingUp size={20} />
+            <Bot size={20} />
           </div>
-          {!collapsed && <span>NSE Scanner</span>}
+          {!collapsed && <span>GridBot</span>}
         </div>
         <button
           className="collapse-toggle"
@@ -72,11 +76,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       <div className="sidebar-footer">
         <div className="bot-info-card">
-          <span className="bot-status-indicator" title="Scanner Status: Live" />
+          <span className="bot-status-indicator" title="Bot Status: Online" />
           {!collapsed && (
             <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <span style={{ color: '#fff', fontWeight: 600 }}>Indian Stock Scanner</span>
-              <span style={{ fontSize: '0.7rem' }}>PROJECT-BETA</span>
+              <span style={{ color: '#fff', fontWeight: 600 }}>DCA Grid Engine</span>
+              <span style={{ fontSize: '0.7rem' }}>v1.0.0</span>
             </div>
           )}
         </div>

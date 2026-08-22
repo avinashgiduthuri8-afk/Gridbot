@@ -1,12 +1,18 @@
 import type {
   HealthResponse,
-  MarketRegimeResponse,
-  SectorMatrixResponse,
-  ScanResponse,
-  BacktestReportResponse,
-  SignalPerformanceStats,
-  SessionInfo,
-  ScoredSignalResponse,
+  GridListResponse,
+  GridResponse,
+  PositionListResponse,
+  OrderListResponse,
+  TradeHistoryResponse,
+  PortfolioResponse,
+  AnalyticsResponse,
+  SettingsResponse,
+  CreateGridRequest,
+  CreateGridResponse,
+  ManualTradeResponse,
+  GridActionResponse,
+  EmergencyStopResponse,
 } from '../types/dashboard';
 
 const API_BASE_URL =
@@ -42,7 +48,7 @@ async function fetchApi<T>(endpoint: string, init?: RequestInit): Promise<T> {
           errorMessage = errorJson.detail;
         }
       } catch {
-        // Ignore json parse error
+        // Ignore json parse error for non-json responses
       }
       throw new ApiError(response.status, errorMessage);
     }
@@ -62,97 +68,76 @@ async function fetchApi<T>(endpoint: string, init?: RequestInit): Promise<T> {
 export const api = {
   getHealth: () => fetchApi<HealthResponse>('/health'),
 
-  // Indian Stock Scanner APIs (PROJECT-BETA)
-  triggerScan: (universe = 'NIFTY_100', maxSignals = 3) =>
-    fetchApi<ScanResponse>('/scanner/scan', {
+  getGrids: () => fetchApi<GridListResponse>('/grids'),
+
+  getGrid: (gridId: string) => fetchApi<GridResponse>(`/grids/${encodeURIComponent(gridId)}`),
+
+  createGrid: (data: CreateGridRequest) =>
+    fetchApi<CreateGridResponse>('/grids', {
       method: 'POST',
-      body: JSON.stringify({ universe, max_signals: maxSignals }),
+      body: JSON.stringify(data),
     }),
 
-  getLatestScan: () => fetchApi<ScanResponse>('/scanner/latest'),
+  manualBuy: (gridId: string, inrAmount: number) =>
+    fetchApi<ManualTradeResponse>(`/grids/${encodeURIComponent(gridId)}/manual-buy`, {
+      method: 'POST',
+      body: JSON.stringify({ inr_amount: inrAmount }),
+    }),
 
-  getSessionStatus: () => fetchApi<SessionInfo>('/scanner/session'),
+  manualSell: (gridId: string, inrAmount?: number | null) =>
+    fetchApi<ManualTradeResponse>(`/grids/${encodeURIComponent(gridId)}/manual-sell`, {
+      method: 'POST',
+      body: JSON.stringify({ inr_amount: inrAmount ?? null }),
+    }),
 
-  getMarketRegime: () => fetchApi<MarketRegimeResponse>('/regime'),
+  pauseGrid: (gridId: string) =>
+    fetchApi<GridActionResponse>(`/grids/${encodeURIComponent(gridId)}/pause`, {
+      method: 'POST',
+    }),
 
-  getSectorMatrix: () => fetchApi<SectorMatrixResponse>('/sectors'),
+  resumeGrid: (gridId: string) =>
+    fetchApi<GridActionResponse>(`/grids/${encodeURIComponent(gridId)}/resume`, {
+      method: 'POST',
+    }),
 
-  getSignals: (limit = 50, status?: string, minScore?: number) => {
-    const params = new URLSearchParams();
-    if (limit) params.append('limit', limit.toString());
-    if (status) params.append('status', status);
-    if (minScore !== undefined) params.append('min_score', minScore.toString());
-    const query = params.toString() ? `?${params.toString()}` : '';
-    return fetchApi<ScoredSignalResponse[]>(`/signals${query}`);
+  stopGrid: (gridId: string) =>
+    fetchApi<GridActionResponse>(`/grids/${encodeURIComponent(gridId)}/stop`, {
+      method: 'POST',
+    }),
+
+  setEmergencyStop: (enabled: boolean) =>
+    fetchApi<EmergencyStopResponse>('/emergency-stop', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    }),
+
+  getPositions: (prices?: string) => {
+    const query = prices ? `?prices=${encodeURIComponent(prices)}` : '';
+    return fetchApi<PositionListResponse>(`/positions${query}`);
   },
 
-  getSignalsHistory: (limit = 50, status?: string, minScore?: number) => {
+  getOrders: (gridId?: string, limit = 200) => {
     const params = new URLSearchParams();
+    if (gridId) params.append('grid_id', gridId);
     if (limit) params.append('limit', limit.toString());
-    if (status) params.append('status', status);
-    if (minScore !== undefined) params.append('min_score', minScore.toString());
     const query = params.toString() ? `?${params.toString()}` : '';
-    return fetchApi<any[]>(`/signals${query}`);
+    return fetchApi<OrderListResponse>(`/orders${query}`);
   },
 
-  getSignalDetail: (signalId: string) =>
-    fetchApi<any>(`/signals/${encodeURIComponent(signalId)}`),
+  getTradeHistory: (gridId?: string, limit = 200) => {
+    const params = new URLSearchParams();
+    if (gridId) params.append('grid_id', gridId);
+    if (limit) params.append('limit', limit.toString());
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return fetchApi<TradeHistoryResponse>(`/trade-history${query}`);
+  },
 
-  getSignalPerformance: () =>
-    fetchApi<SignalPerformanceStats>('/signals/performance'),
+  getPortfolio: (prices?: string) => {
+    const query = prices ? `?prices=${encodeURIComponent(prices)}` : '';
+    return fetchApi<PortfolioResponse>(`/portfolio${query}`);
+  },
 
-  runBacktest: (universe = 'NIFTY_50', lookbackBars = 60) =>
-    fetchApi<BacktestReportResponse>('/backtest/run', {
-      method: 'POST',
-      body: JSON.stringify({ universe, lookback_bars: lookbackBars }),
-    }),
+  getAnalytics: () => fetchApi<AnalyticsResponse>('/analytics'),
 
-  // Stock Fundamentals & NSE Delivery APIs
-  getStockInfo: (symbol: string, forceRefresh = false) =>
-    fetchApi<any>(`/stocks/${encodeURIComponent(symbol)}/info${forceRefresh ? '?force_refresh=true' : ''}`),
-
-  getStockRatios: (symbol: string) =>
-    fetchApi<any>(`/stocks/${encodeURIComponent(symbol)}/ratios`),
-
-  getStockDelivery: (symbol: string) =>
-    fetchApi<any>(`/stocks/${encodeURIComponent(symbol)}/delivery`),
-
-  getBatchStockInfo: (symbols: string[]) =>
-    fetchApi<Record<string, any>>(`/stocks/batch-info?symbols=${encodeURIComponent(symbols.join(','))}`),
-
-  // Signal Ledger & R-Multiple APIs
-  getLedgerStats: () =>
-    fetchApi<any>('/ledger/stats'),
-
-  getActiveLedgerSignals: () =>
-    fetchApi<any[]>('/ledger/active'),
-
-  evaluateLedger: (quotes: Record<string, number>) =>
-    fetchApi<any>('/ledger/evaluate', {
-      method: 'POST',
-      body: JSON.stringify(quotes),
-    }),
-
-  // Execution Bots & Webhook Dispatch APIs
-  getRegisteredBots: (activeOnly = false) =>
-    fetchApi<any[]>(`/dispatch/bots${activeOnly ? '?active_only=true' : ''}`),
-
-  registerBot: (bot: any) =>
-    fetchApi<any>('/dispatch/bots', {
-      method: 'POST',
-      body: JSON.stringify(bot),
-    }),
-
-  deleteBot: (botId: string) =>
-    fetchApi<any>(`/dispatch/bots/${encodeURIComponent(botId)}`, {
-      method: 'DELETE',
-    }),
-
-  testPingBot: (botId: string) =>
-    fetchApi<any>(`/dispatch/test-ping/${encodeURIComponent(botId)}`, {
-      method: 'POST',
-    }),
-
-  getDispatchLogs: (limit = 50) =>
-    fetchApi<any[]>(`/dispatch/logs?limit=${limit}`),
+  getSettings: () => fetchApi<SettingsResponse>('/settings'),
 };

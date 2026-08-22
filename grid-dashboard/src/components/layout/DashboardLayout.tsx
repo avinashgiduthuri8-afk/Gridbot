@@ -9,6 +9,7 @@ interface DashboardLayoutProps {
   health: HealthResponse | null;
   loading: boolean;
   lastUpdated: Date | null;
+  emergencyStopActive?: boolean;
   onRefresh: () => void;
   children: React.ReactNode;
 }
@@ -19,6 +20,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   health,
   loading,
   lastUpdated,
+  emergencyStopActive = false,
   onRefresh,
   children,
 }) => {
@@ -38,6 +40,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
           health={health}
           loading={loading}
           lastUpdated={lastUpdated}
+          emergencyStopActive={emergencyStopActive}
           onRefresh={onRefresh}
         />
         <main className="page-container">{children}</main>
