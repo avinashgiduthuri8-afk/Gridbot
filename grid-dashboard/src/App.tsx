@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { DashboardLayout } from './components/layout/DashboardLayout';
 import { OverviewPage } from './pages/OverviewPage';
 import { ScannerPage } from './pages/ScannerPage';
+import { StockExplorerPage } from './pages/StockExplorerPage';
 import { SectorsPage } from './pages/SectorsPage';
 import { SignalsHistoryPage } from './pages/SignalsHistoryPage';
 import { BacktestPage } from './pages/BacktestPage';
@@ -13,8 +14,16 @@ import { Bell, X, ArrowRight } from 'lucide-react';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<NavigationTab>('overview');
+  const [selectedStockSymbol, setSelectedStockSymbol] = useState<string>('TATAMOTORS');
   const { data, loading, error, lastUpdated, refetch } = useDashboardData(15000);
   const { connected: _connected, latestNotification, clearNotification } = useDispatchWebSocket();
+
+  const handleNavigate = (tab: NavigationTab, prefillSymbol?: string) => {
+    if (prefillSymbol) {
+      setSelectedStockSymbol(prefillSymbol);
+    }
+    setActiveTab(tab);
+  };
 
   const renderActivePage = () => {
     switch (activeTab) {
@@ -23,12 +32,19 @@ export function App() {
           <OverviewPage
             data={data}
             loading={loading}
-            onNavigate={setActiveTab}
+            onNavigate={handleNavigate}
             onRefresh={refetch}
           />
         );
       case 'scanner':
         return <ScannerPage />;
+      case 'stocks':
+        return (
+          <StockExplorerPage
+            initialSymbol={selectedStockSymbol}
+            onNavigate={handleNavigate}
+          />
+        );
       case 'sectors':
         return <SectorsPage />;
       case 'signals':
@@ -42,7 +58,7 @@ export function App() {
           <OverviewPage
             data={data}
             loading={loading}
-            onNavigate={setActiveTab}
+            onNavigate={handleNavigate}
             onRefresh={refetch}
           />
         );
@@ -92,7 +108,7 @@ export function App() {
             <button
               onClick={() => {
                 clearNotification();
-                setActiveTab('scanner');
+                handleNavigate('stocks', latestNotification.symbol);
               }}
               style={{
                 backgroundColor: '#2563EB',
@@ -108,7 +124,7 @@ export function App() {
                 gap: '4px',
               }}
             >
-              View in Scanner <ArrowRight size={12} />
+              Explore Stock <ArrowRight size={12} />
             </button>
             <button
               onClick={clearNotification}

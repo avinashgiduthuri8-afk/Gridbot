@@ -1,6 +1,7 @@
 export type NavigationTab =
   | 'overview'
   | 'scanner'
+  | 'stocks'
   | 'sectors'
   | 'signals'
   | 'backtest'
@@ -273,6 +274,29 @@ export interface SignalPerformanceStats {
 export interface HealthResponse {
   status: string;
   database_connected: boolean;
+}
+
+export interface StockSearchResult {
+  symbol: string;
+  company_name: string;
+  sector: string;
+  market_cap_category: string;
+}
+
+export interface StockTechnicalHealthResponse {
+  symbol: string;
+  trend_baseline: string;
+  is_above_20_ema: boolean;
+  is_above_50_ema: boolean;
+  is_above_200_ema: boolean;
+  extension_from_20_ema_pct: number;
+  rs_alpha: number;
+  detected_setup: string;
+  setup_quality_score: number;
+  earnings_blackout_risk: string;
+  circuit_proximity_pct: number;
+  confluence_status: string;
+  reasons: string[];
 }
 
 export interface CorporateEvent {

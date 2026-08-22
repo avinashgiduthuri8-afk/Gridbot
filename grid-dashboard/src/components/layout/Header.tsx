@@ -14,6 +14,7 @@ interface HeaderProps {
 const TAB_TITLES: Record<NavigationTab, string> = {
   overview: 'Market Overview & Regime',
   scanner: 'Indian Stock Scanner',
+  stocks: 'Stock Explorer & Fundamental Analysis',
   sectors: 'Sector Strength & Momentum',
   signals: 'Signals Log & MFE/MAE History',
   backtest: 'Scanner Backtesting Suite',

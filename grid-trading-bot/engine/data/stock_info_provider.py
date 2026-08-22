@@ -406,6 +406,51 @@ class StockInfoProvider:
             last_updated=now_iso(),
         )
 
+    def search_stocks(self, query: str, limit: int = 10) -> list[dict[str, str]]:
+        """Searches NSE stock universe by ticker symbol or company name."""
+        q = query.strip().upper()
+        if not q:
+            # Return top default trending names
+            defaults = ["RELIANCE", "TCS", "HDFCBANK", "INFY", "TATAMOTORS", "ICICIBANK", "BHARTIARTL", "ZOMATO", "IRFC", "LT"]
+            from config.indian_universe import get_universe_stocks
+            all_stocks = get_universe_stocks("ALL")
+            res = []
+            for sym in defaults:
+                info = all_stocks.get(sym, {})
+                res.append({
+                    "symbol": sym,
+                    "company_name": info.get("name", f"{sym} Ltd"),
+                    "sector": info.get("sector", "General"),
+                    "market_cap_category": f"{info.get('cap', 'Large')} Cap",
+                })
+            return res[:limit]
+
+        from config.indian_universe import get_universe_stocks
+        all_stocks = get_universe_stocks("ALL")
+        matches = []
+
+        # 1. Exact or prefix symbol match
+        for sym, meta in all_stocks.items():
+            if sym.startswith(q) or q in sym or q in meta.get("name", "").upper():
+                matches.append({
+                    "symbol": sym,
+                    "company_name": meta.get("name", f"{sym} Ltd"),
+                    "sector": meta.get("sector", "General"),
+                    "market_cap_category": f"{meta.get('cap', 'Large')} Cap",
+                })
+
+        # 2. If no exact universe match, allow custom search query
+        if not matches or not any(m["symbol"] == q for m in matches):
+            clean_q = q.replace(".NS", "").replace(".BO", "")
+            matches.insert(0, {
+                "symbol": clean_q,
+                "company_name": f"{clean_q} Ltd (NSE)",
+                "sector": "General",
+                "market_cap_category": "Equities",
+            })
+
+        return matches[:limit]
+
     def _extract_num(self, val: Any) -> float | None:
         if val is None:
             return None

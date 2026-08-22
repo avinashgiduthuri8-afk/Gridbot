@@ -6,12 +6,12 @@ import { SignalDetailModal } from '../components/common/SignalDetailModal';
 import { SectorHeatmap } from '../components/common/SectorHeatmap';
 import type { NavigationTab, ScanResponse, SectorMatrixResponse, ScoredSignalResponse } from '../types/dashboard';
 import type { DashboardData } from '../hooks/useDashboardData';
-import { Search, PieChart, Target, PlaySquare } from 'lucide-react';
+import { Search, Compass, PieChart, Target, PlaySquare } from 'lucide-react';
 
 interface OverviewPageProps {
   data: DashboardData;
   loading: boolean;
-  onNavigate: (tab: NavigationTab) => void;
+  onNavigate: (tab: NavigationTab, prefillSymbol?: string) => void;
   onRefresh?: () => void;
 }
 
@@ -60,7 +60,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
       <MarketRegimeBar regime={scanResult?.regime} session={scanResult?.session_info} />
 
       {/* 2. Executive Quick Action Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
         <div
           onClick={() => onNavigate('scanner')}
           style={{
@@ -76,10 +76,32 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#10B981', marginBottom: '8px' }}>
             <Search size={20} />
-            <span style={{ fontWeight: 700, fontSize: '15px', color: '#F9FAFB' }}>Indian Stock Scanner</span>
+            <span style={{ fontWeight: 700, fontSize: '15px', color: '#F9FAFB' }}>Stock Scanner</span>
           </div>
           <p style={{ fontSize: '12px', color: '#9CA3AF', margin: 0 }}>
             Run multi-timeframe scans across NIFTY 50/100/200/500
+          </p>
+        </div>
+
+        <div
+          onClick={() => onNavigate('stocks')}
+          style={{
+            backgroundColor: '#1F2937',
+            padding: '16px',
+            borderRadius: '10px',
+            border: '1px solid #374151',
+            cursor: 'pointer',
+            transition: 'all 0.2s',
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#3B82F6')}
+          onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#374151')}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#3B82F6', marginBottom: '8px' }}>
+            <Compass size={20} />
+            <span style={{ fontWeight: 700, fontSize: '15px', color: '#F9FAFB' }}>Stock Explorer</span>
+          </div>
+          <p style={{ fontSize: '12px', color: '#9CA3AF', margin: 0 }}>
+            Deep fundamentals, NSE delivery &amp; technical health
           </p>
         </div>
 

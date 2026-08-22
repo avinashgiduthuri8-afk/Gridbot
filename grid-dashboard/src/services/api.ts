@@ -109,9 +109,15 @@ export const api = {
       body: JSON.stringify(typeof params === 'string' ? { universe: params } : params),
     }),
 
-  // Stock Fundamentals & NSE Delivery APIs
+  // Stock Fundamentals, Search & Technical Health APIs
+  searchStocks: (query: string, limit = 10) =>
+    fetchApi<any[]>(`/stocks/search?q=${encodeURIComponent(query)}&limit=${limit}`),
+
   getStockInfo: (symbol: string, forceRefresh = false) =>
     fetchApi<any>(`/stocks/${encodeURIComponent(symbol)}/info${forceRefresh ? '?force_refresh=true' : ''}`),
+
+  getStockTechnicalHealth: (symbol: string) =>
+    fetchApi<any>(`/stocks/${encodeURIComponent(symbol)}/technical-health`),
 
   getStockRatios: (symbol: string) =>
     fetchApi<any>(`/stocks/${encodeURIComponent(symbol)}/ratios`),

@@ -3,6 +3,7 @@ import type { NavigationTab } from '../../types/dashboard';
 import {
   LayoutDashboard,
   Search,
+  Compass,
   PieChart,
   Target,
   PlaySquare,
@@ -22,6 +23,7 @@ interface SidebarProps {
 const NAV_ITEMS: { id: NavigationTab; label: string; icon: React.ReactNode }[] = [
   { id: 'overview', label: 'Overview', icon: <LayoutDashboard size={18} /> },
   { id: 'scanner', label: 'Stock Scanner', icon: <Search size={18} /> },
+  { id: 'stocks', label: 'Stock Explorer', icon: <Compass size={18} /> },
   { id: 'sectors', label: 'Sector Matrix', icon: <PieChart size={18} /> },
   { id: 'signals', label: 'Signals Log', icon: <Target size={18} /> },
   { id: 'backtest', label: 'Backtesting', icon: <PlaySquare size={18} /> },

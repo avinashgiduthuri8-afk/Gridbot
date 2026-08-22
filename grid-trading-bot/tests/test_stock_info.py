@@ -92,3 +92,18 @@ async def test_stock_info_rest_endpoints():
         data_batch = res_batch.json()
         assert "RELIANCE" in data_batch
         assert "TCS" in data_batch
+
+        # 5. Search Stocks
+        res_search = await client.get("/api/v1/stocks/search?q=tata")
+        assert res_search.status_code == 200
+        search_data = res_search.json()
+        assert len(search_data) > 0
+        assert any("TATA" in s["symbol"] for s in search_data)
+
+        # 6. Technical Health Check
+        res_tech = await client.get("/api/v1/stocks/TATAMOTORS/technical-health")
+        assert res_tech.status_code == 200
+        tech_data = res_tech.json()
+        assert tech_data["symbol"] == "TATAMOTORS"
+        assert "trend_baseline" in tech_data
+        assert "circuit_proximity_pct" in tech_data
