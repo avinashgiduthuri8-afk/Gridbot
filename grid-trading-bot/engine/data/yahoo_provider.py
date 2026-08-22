@@ -223,9 +223,21 @@ class YahooFinanceProvider(MarketDataProvider):
             "Banking": "^NSEBANK",
         }
 
-        # First get NIFTY 50 1d change for relative strength baseline
-        nifty_quotes = await self.get_market_indices()
-        nifty_1d_change = nifty_quotes.get("NIFTY_50").change_pct if "NIFTY_50" in nifty_quotes else 0.0
+        # First get NIFTY 50 candles for 1d, 5d, 20d relative strength baseline
+        nifty_candles = await self.get_historical_ohlcv("^NSEI", timeframe="1d", lookback_bars=25)
+        nifty_1d_change = 0.0
+        nifty_5d_change = 0.0
+        nifty_20d_change = 0.0
+
+        if nifty_candles:
+            n_latest = nifty_candles[-1].close
+            n_prev_1d = nifty_candles[-2].close if len(nifty_candles) >= 2 else n_latest
+            n_prev_5d = nifty_candles[-5].close if len(nifty_candles) >= 5 else n_latest
+            n_prev_20d = nifty_candles[-20].close if len(nifty_candles) >= 20 else n_latest
+
+            nifty_1d_change = ((n_latest - n_prev_1d) / n_prev_1d * 100.0) if n_prev_1d > 0 else 0.0
+            nifty_5d_change = ((n_latest - n_prev_5d) / n_prev_5d * 100.0) if n_prev_5d > 0 else 0.0
+            nifty_20d_change = ((n_latest - n_prev_20d) / n_prev_20d * 100.0) if n_prev_20d > 0 else 0.0
 
         sector_results: dict[str, SectorQuote] = {}
         for sector_name, ticker in sectors.items():
@@ -242,12 +254,17 @@ class YahooFinanceProvider(MarketDataProvider):
                 chg_5d = ((latest.close - prev_5d.close) / prev_5d.close * 100.0) if prev_5d.close > 0 else 0.0
                 chg_20d = ((latest.close - prev_20d.close) / prev_20d.close * 100.0) if prev_20d.close > 0 else 0.0
 
-                rel_strength = chg_1d - nifty_1d_change
-                if rel_strength > 1.0:
+                # Multi-period composite relative strength: 40% 20d, 30% 5d, 30% 1d
+                rs_1d = chg_1d - nifty_1d_change
+                rs_5d = chg_5d - nifty_5d_change
+                rs_20d = chg_20d - nifty_20d_change
+                composite_rs = round((rs_20d * 0.40) + (rs_5d * 0.30) + (rs_1d * 0.30), 2)
+
+                if composite_rs >= 1.5:
                     status = "LEADING"
-                elif rel_strength > 0.0:
+                elif composite_rs >= 0.0:
                     status = "IMPROVING"
-                elif rel_strength > -1.0:
+                elif composite_rs >= -1.5:
                     status = "WEAKENING"
                 else:
                     status = "LAGGING"
@@ -255,16 +272,16 @@ class YahooFinanceProvider(MarketDataProvider):
                 sector_results[sector_name] = SectorQuote(
                     sector=sector_name,
                     index_symbol=ticker,
-                    change_pct_1d=chg_1d,
-                    change_pct_5d=chg_5d,
-                    change_pct_20d=chg_20d,
-                    relative_strength=rel_strength,
+                    change_pct_1d=round(chg_1d, 2),
+                    change_pct_5d=round(chg_5d, 2),
+                    change_pct_20d=round(chg_20d, 2),
+                    relative_strength=composite_rs,
                     status=status,
                 )
             except Exception as exc:
                 log.warning("Could not fetch sector %s: %s", sector_name, exc)
 
-        # Compute momentum ranks
+        # Compute momentum ranks based on composite relative strength
         sorted_sectors = sorted(sector_results.values(), key=lambda s: s.relative_strength, reverse=True)
         for rank, s in enumerate(sorted_sectors, start=1):
             s.momentum_rank = rank

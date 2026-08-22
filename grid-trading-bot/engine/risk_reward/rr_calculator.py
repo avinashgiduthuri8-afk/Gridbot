@@ -97,25 +97,36 @@ class RiskRewardCalculator:
         risk = max(entry - stop_loss, entry * 0.005)
         stop_loss = round(entry - risk, 2)
 
-        # 2. Structural Target Geometry (1.8R-2.2R T1 + 1.618 Fib Extension T2)
+        # 2. Structural Target Geometry & Resistance Clearance Check
         rejection_reason = ""
         is_acceptable = True
         t1_basis = ""
 
         # Resistance clearance check:
-        # If immediate resistance is strictly closer than 1.7x risk, upside is structurally capped
-        if resistance > entry and (resistance - entry) < (risk * 1.7):
-            is_acceptable = False
-            rejection_reason = f"Overhead resistance at ₹{resistance:.2f} caps upside below {self.min_rr:.1f} R:R (available: {((resistance-entry)/risk):.1f}x)"
-            target_1 = round(resistance, 2)
-            target_2 = round(entry + (risk * 2.5), 2)
-            t1_basis = f"Capped by 20d resistance ₹{resistance:.2f}"
+        # If immediate resistance is strictly closer than required minimum R:R, upside is structurally capped
+        has_real_resistance = snap_1d.resistance_20 is not None and snap_1d.resistance_20 > entry
+
+        if has_real_resistance and snap_1d.resistance_20:
+            res_level = snap_1d.resistance_20
+            avail_reward = res_level - entry
+            avail_rr = avail_reward / risk if risk > 0 else 0.0
+
+            if avail_rr < self.min_rr:
+                is_acceptable = False
+                rejection_reason = f"Overhead resistance at ₹{res_level:.2f} caps upside below {self.min_rr:.1f} R:R (available: {avail_rr:.1f}x)"
+                target_1 = round(res_level, 2)
+                target_2 = round(entry + (risk * 2.5), 2)
+                t1_basis = f"Capped by 20d resistance ₹{res_level:.2f}"
+            else:
+                # Structural target at verified resistance level
+                target_1 = round(res_level, 2)
+                target_2 = round(entry + (risk * 3.5), 2)
+                t1_basis = f"20-day swing resistance at ₹{res_level:.2f} ({avail_rr:.1f}R clearance)"
         else:
-            # Natural target 1 at 2.0x Risk
-            target_1 = round(max(resistance, entry + (risk * 2.0)), 2)
-            # Fibonacci 1.618 expansion or 3.5x runner
+            # Blue-sky breakout / All-time high room
+            target_1 = round(entry + (risk * self.min_rr), 2)
             target_2 = round(entry + (risk * 3.5), 2)
-            t1_basis = "2.0x Structural Expansion Target (Clear Overhead Room)"
+            t1_basis = f"{self.min_rr:.1f}x Structural Expansion Target (Clear Overhead Room)"
 
         reward = target_1 - entry
         rr = reward / risk if risk > 0 else 0.0

@@ -35,7 +35,7 @@ class NewsSentimentEvaluator:
             return SentimentAnalysis(
                 symbol=symbol,
                 sentiment="NEUTRAL",
-                score=3.5,
+                score=0.0,
                 reason="Quiet news flow / No recent corporate events",
             )
 

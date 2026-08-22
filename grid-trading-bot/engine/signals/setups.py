@@ -133,7 +133,7 @@ class TechnicalSetupDetector:
         vol_surge = snap_1d.volume_surge_ratio
 
         # Hardened VCP rules: BB bandwidth <= 8.5%, price near pivot (within 3.5%), volume >= 1.4x
-        is_tight_base = bb_width <= 0.085
+        is_tight_base = bb_width <= 8.5
         is_near_pivot = (resistance * 0.965) <= price <= (resistance * 1.025)
         has_breakout_volume = vol_surge >= 1.4
 
@@ -190,11 +190,11 @@ class TechnicalSetupDetector:
     ) -> SetupEvaluation:
         """Detects NR7 (Narrowest Range of 7 days) Volatility Compression."""
         price = snap_1d.last_price
-        bb_width = snap_1d.bb_bandwidth or 1.0
+        bb_width = snap_1d.bb_bandwidth or 10.0
         vol_surge = snap_1d.volume_surge_ratio
 
-        # NR7: Extreme compression (BB bandwidth <= 0.07) followed by price trigger above VWAP
-        is_nr7_compressed = bb_width <= 0.07
+        # NR7: Mathematically verified narrowest range of 7 days OR extreme BB compression (<= 7.0%)
+        is_nr7_compressed = snap_1d.is_nr7 or (bb_width <= 7.0)
         is_triggered = is_nr7_compressed and snap_1d.is_above_vwap and vol_surge >= 1.25
         score = 13.5 if is_triggered else 0.0
 
@@ -220,14 +220,14 @@ class TechnicalSetupDetector:
         resistance = snap_1d.resistance_20 or price
         volume_surge = snap_1d.volume_surge_ratio
         rsi = snap_1d.rsi or 50.0
-        bb_width = snap_1d.bb_bandwidth or 1.0
+        bb_width = snap_1d.bb_bandwidth or 10.0
 
         risks: list[str] = []
 
         is_breaking = price >= (resistance * 0.998)
         has_volume = volume_surge >= 1.4
         has_momentum = 55.0 <= rsi <= 76.0
-        is_compressed = bb_width < 0.12 or (snap_1d.atr and snap_1d.atr < (price * 0.02))
+        is_compressed = bb_width < 12.0 or (snap_1d.atr and snap_1d.atr < (price * 0.02))
 
         is_false_breakout = False
         if snap_15m and snap_15m.open and snap_15m.last_price < snap_15m.open:

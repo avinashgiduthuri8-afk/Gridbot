@@ -24,6 +24,7 @@ from typing import Any
 
 from config.constants import DEFAULT_MAX_FINAL_SIGNALS, SignalStrength
 from engine.data.base import MarketDataProvider, OHLCVCandle
+from engine.data.stock_info_provider import StockInfoProvider
 from engine.indicators.technical import TechnicalIndicatorEngine
 from engine.mtf.mtf_analyzer import MultiTimeframeAnalyzer
 from engine.regime.regime_detector import MarketRegimeAnalysis, MarketRegimeDetector
@@ -67,8 +68,10 @@ class IndianStockScanner:
         provider: MarketDataProvider,
         liquidity_config: LiquidityFilterConfig | None = None,
         min_rr: float = 2.0,
+        stock_info_provider: StockInfoProvider | None = None,
     ) -> None:
         self.provider = provider
+        self.stock_info_provider = stock_info_provider or StockInfoProvider()
         self.session_mgr = IndianSessionManager()
         self.universe_filter = StockUniverseFilter(liquidity_config)
         self.indicator_engine = TechnicalIndicatorEngine()
@@ -123,8 +126,8 @@ class IndianStockScanner:
             nonlocal passed_liquidity_count
             async with semaphore:
                 try:
-                    # 1. Fetch 1D candles for liquidity & daily trend
-                    c_1d = await self.provider.get_historical_ohlcv(sym, "1d", 100)
+                    # 1. Fetch 250 daily candles for 200 EMA & Stage-2 trend baseline
+                    c_1d = await self.provider.get_historical_ohlcv(sym, "1d", 250)
                     if not c_1d:
                         return None
 
@@ -135,21 +138,52 @@ class IndianStockScanner:
 
                     passed_liquidity_count += 1
 
-                    # STAGE 5: Fetch 1H and 15M candles concurrently
+                    # STAGE 5: Fetch 1H, 15M candles, news, and authentic stock info concurrently
                     c_1h_task = self.provider.get_historical_ohlcv(sym, "1h", 60)
                     c_15m_task = self.provider.get_historical_ohlcv(sym, "15m", 50)
                     news_task = self.provider.get_news(sym, 5)
+                    stock_info_task = self.stock_info_provider.get_stock_info(sym)
 
-                    c_1h, c_15m, news_items = await asyncio.gather(c_1h_task, c_15m_task, news_task)
+                    c_1h, c_15m, news_items, stock_info = await asyncio.gather(
+                        c_1h_task, c_15m_task, news_task, stock_info_task, return_exceptions=False
+                    )
 
                     snap_1d = self.indicator_engine.compute_snapshot(sym, c_1d, "1d")
                     snap_15m = self.indicator_engine.compute_snapshot(sym, c_15m, "15m") if c_15m else None
+
+                    # Authentic delivery percentage (None if unavailable)
+                    delivery_pct = stock_info.delivery_pct if (stock_info and stock_info.delivery_pct and stock_info.delivery_pct > 0) else None
+
+                    # STAGE 2.5: Binary Hard Safety & Regulatory Disqualification Gates
+                    daily_turnover_cr = ((c_1d[-1].close * c_1d[-1].volume) / 10000000.0) if c_1d and c_1d[-1].volume > 0 else 50.0
+                    safety_metrics = self.safety_filter.evaluate_safety(
+                        symbol=sym,
+                        current_price=snap_1d.last_price,
+                        upper_circuit=stock_info.upper_circuit if stock_info else 0.0,
+                        lower_circuit=stock_info.lower_circuit if stock_info else 0.0,
+                    )
+                    hard_gate = self.safety_filter.validate_binary_hard_gates(
+                        symbol=sym,
+                        current_price=snap_1d.last_price,
+                        ema_20=snap_1d.ema_20,
+                        ema_50=snap_1d.ema_50,
+                        ema_200=snap_1d.ema_200,
+                        atr=snap_1d.atr,
+                        market_regime=regime.regime.value,
+                        india_vix=regime.vix_value,
+                        daily_turnover_cr=daily_turnover_cr,
+                        safety_metrics=safety_metrics,
+                        stock_info=stock_info,
+                    )
+                    if not hard_gate.passed:
+                        log.debug("Symbol %s disqualified by hard gate %s: %s", sym, hard_gate.rejection_category, hard_gate.rejection_reason)
+                        return None
 
                     # STAGE 6: Multi-Timeframe Confirmation
                     mtf = self.mtf_analyzer.analyze_confluence(sym, c_1d, c_1h, c_15m)
 
                     # STAGE 7: Setup Identification
-                    setups = self.setup_detector.evaluate_all_setups(snap_1d, snap_15m)
+                    setups = self.setup_detector.evaluate_all_setups(snap_1d, snap_15m, delivery_pct=delivery_pct)
                     if not setups:
                         return None
                     best_setup = setups[0]
@@ -187,6 +221,8 @@ class IndianStockScanner:
                         extension=extension,
                         sector_name=sec_name,
                         sector_rank=sec_rank,
+                        delivery_pct=delivery_pct,
+                        stock_info=stock_info,
                     )
                     scored.timestamp = now_iso()
 

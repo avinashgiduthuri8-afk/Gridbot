@@ -16,7 +16,7 @@ def test_breakout_with_compression_and_volume():
         resistance_20=1000.0,
         volume_surge_ratio=1.8,
         rsi=62.0,
-        bb_bandwidth=0.08,  # Tight consolidation squeeze
+        bb_bandwidth=7.5,  # Tight consolidation squeeze in percentage (7.5%)
         vwap=1000.0,
     )
     setups = detector.evaluate_all_setups(snap_1d)

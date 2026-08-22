@@ -51,9 +51,10 @@ class IndicatorSnapshot:
     volume_sma_20: float | None = None
     volume_surge_ratio: float = 1.0
 
-    # Key Levels
+    # Key Levels & Volatility Squeeze
     resistance_20: float | None = None
     support_20: float | None = None
+    is_nr7: bool = False
 
     @property
     def is_ema_aligned_bullish(self) -> bool:
@@ -385,6 +386,15 @@ class TechnicalIndicatorEngine:
         resistance_20 = max(highs[-lookback:]) if lookback > 0 else last_price
         support_20 = min(lows[-lookback:]) if lookback > 0 else last_price
 
+        # Genuine NR7 Calculation (Narrowest High-Low Range of the last 7 bars)
+        is_nr7 = False
+        if len(candles) >= 7:
+            ranges = [(candles[idx].high - candles[idx].low) for idx in range(-7, 0)]
+            today_range = ranges[-1]
+            prior_6_ranges = ranges[:-1]
+            if prior_6_ranges and today_range < min(prior_6_ranges) and today_range > 0:
+                is_nr7 = True
+
         return IndicatorSnapshot(
             symbol=symbol,
             timeframe=timeframe,
@@ -412,4 +422,5 @@ class TechnicalIndicatorEngine:
             volume_surge_ratio=surge_ratio,
             resistance_20=resistance_20,
             support_20=support_20,
+            is_nr7=is_nr7,
         )

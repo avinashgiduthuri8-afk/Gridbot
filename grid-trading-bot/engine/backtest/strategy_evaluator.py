@@ -210,6 +210,9 @@ class MultiStrategyBacktester:
         daily_returns: list[float] = []
         prev_capital = initial_capital
 
+        slippage_pct = 0.001  # 0.10% institutional slippage per trade
+        pending_signal: dict[str, Any] | None = None
+
         # Warm-up 50 candles for indicators
         for i in range(49, len(candles)):
             curr_candle = candles[i]
@@ -219,7 +222,52 @@ class MultiStrategyBacktester:
             # Update Benchmark Growth
             benchmark_val = (curr_candle.close / initial_price) * initial_capital if initial_price > 0 else initial_capital
 
-            # 1. Manage Active Trade
+            # 1. Fill Pending Entry at Next-Bar Open (t+1 execution)
+            if active_trade is None and pending_signal is not None:
+                entry_price = round(curr_candle.open * (1.0 + slippage_pct), 2)
+                atr = snap.atr or (entry_price * 0.02)
+                stype = pending_signal["strategy"].upper()
+
+                if "VCP" in stype:
+                    sl = entry_price - (atr * 1.0)
+                elif "NR7" in stype:
+                    sl = entry_price - (atr * 0.7)
+                elif "POCKET" in stype:
+                    sl = (snap.ema_20 or entry_price) - (atr * 0.3)
+                else:
+                    sl = entry_price - (atr * 1.2)
+
+                sl = round(max(sl, entry_price * 0.94), 2)  # Max 6% SL
+                risk_per_share = entry_price - sl
+
+                if risk_per_share > 0:
+                    t1 = round(entry_price + (risk_per_share * target_1_rr), 2)
+                    t2 = round(entry_price + (risk_per_share * target_2_rr), 2)
+
+                    # Position sizing based on account risk
+                    risk_capital = capital * (risk_pct_per_trade / 100.0)
+                    shares = max(1, int(risk_capital / risk_per_share))
+
+                    # Cap position size to 25% of total capital
+                    max_shares_by_alloc = int((capital * 0.25) / entry_price)
+                    shares = min(shares, max(1, max_shares_by_alloc))
+
+                    trade_counter += 1
+                    active_trade = {
+                        "entry_date": curr_candle.timestamp[:10],
+                        "entry_price": entry_price,
+                        "stop_loss": sl,
+                        "initial_sl": sl,
+                        "target_1": t1,
+                        "target_2": t2,
+                        "risk_per_share": risk_per_share,
+                        "shares": shares,
+                        "holding_days": 0,
+                        "t1_hit": False,
+                    }
+                pending_signal = None
+
+            # 2. Manage Active Trade
             if active_trade is not None:
                 active_trade["holding_days"] += 1
                 entry_price = active_trade["entry_price"]
@@ -232,14 +280,15 @@ class MultiStrategyBacktester:
                 exit_reason = None
                 exit_price = None
 
-                # Check Stop Loss (Intraday Low hit SL)
+                # Check Stop Loss First (Conservative collision handling)
                 if curr_candle.low <= sl:
                     exit_reason = "STOPPED_OUT"
-                    exit_price = min(curr_candle.open, sl) if curr_candle.open < sl else sl
+                    raw_exit = min(curr_candle.open, sl) if curr_candle.open < sl else sl
+                    exit_price = round(raw_exit * (1.0 - slippage_pct), 2)
                 # Check Target 2
                 elif curr_candle.high >= t2:
                     exit_reason = "HIT_T2"
-                    exit_price = t2
+                    exit_price = round(t2 * (1.0 - slippage_pct), 2)
                 # Check Target 1 (Lock in partial / move SL to Breakeven)
                 elif curr_candle.high >= t1 and not active_trade.get("t1_hit"):
                     active_trade["t1_hit"] = True
@@ -252,7 +301,7 @@ class MultiStrategyBacktester:
                 # Check Max Holding Timeout
                 elif active_trade["holding_days"] >= max_holding_bars:
                     exit_reason = "TIMEOUT"
-                    exit_price = curr_candle.close
+                    exit_price = round(curr_candle.close * (1.0 - slippage_pct), 2)
 
                 # Execute Exit if triggered
                 if exit_reason and exit_price is not None:
@@ -286,8 +335,8 @@ class MultiStrategyBacktester:
                     )
                     active_trade = None
 
-            # 2. Check for New Entry Setup (if no active trade)
-            if active_trade is None and i < len(candles) - 1:
+            # 3. Check for New Entry Setup (Signal generated at t close, to be filled at t+1 open)
+            if active_trade is None and pending_signal is None and i < len(candles) - 1:
                 is_entry = False
                 stype = strategy.upper()
 
@@ -301,57 +350,18 @@ class MultiStrategyBacktester:
                     nr7 = self.setup_detector._detect_nr7(snap)
                     is_entry = nr7.is_triggered
                 elif "DELIVERY" in stype:
-                    hdb = self.setup_detector._detect_high_delivery_breakout(snap, None, delivery_pct=55.0)
+                    # In historical backtest without separate delivery feed, require breakout with volume
+                    hdb = self.setup_detector._detect_high_delivery_breakout(snap, None, delivery_pct=None)
                     is_entry = hdb.is_triggered
                 elif "COMBINED" in stype:
-                    setups = self.setup_detector.evaluate_all_setups(snap, None, delivery_pct=50.0)
+                    setups = self.setup_detector.evaluate_all_setups(snap, None, delivery_pct=None)
                     is_entry = len(setups) > 0 and setups[0].quality_score >= 13.5
                 else:
                     bo = self.setup_detector._detect_breakout(snap)
                     is_entry = bo.is_triggered
 
                 if is_entry:
-                    entry_price = curr_candle.close
-                    atr = snap.atr or (entry_price * 0.02)
-
-                    # Structural Stop Loss
-                    if "VCP" in stype:
-                        sl = entry_price - (atr * 1.0)
-                    elif "NR7" in stype:
-                        sl = entry_price - (atr * 0.7)
-                    elif "POCKET" in stype:
-                        sl = (snap.ema_20 or entry_price) - (atr * 0.3)
-                    else:
-                        sl = entry_price - (atr * 1.2)
-
-                    sl = round(max(sl, entry_price * 0.94), 2)  # Max 6% SL
-                    risk_per_share = entry_price - sl
-
-                    if risk_per_share > 0:
-                        t1 = round(entry_price + (risk_per_share * target_1_rr), 2)
-                        t2 = round(entry_price + (risk_per_share * target_2_rr), 2)
-
-                        # Position sizing based on account risk
-                        risk_capital = capital * (risk_pct_per_trade / 100.0)
-                        shares = max(1, int(risk_capital / risk_per_share))
-
-                        # Cap position size to 25% of total capital
-                        max_shares_by_alloc = int((capital * 0.25) / entry_price)
-                        shares = min(shares, max(1, max_shares_by_alloc))
-
-                        trade_counter += 1
-                        active_trade = {
-                            "entry_date": curr_candle.timestamp[:10],
-                            "entry_price": entry_price,
-                            "stop_loss": sl,
-                            "initial_sl": sl,
-                            "target_1": t1,
-                            "target_2": t2,
-                            "risk_per_share": risk_per_share,
-                            "shares": shares,
-                            "holding_days": 0,
-                            "t1_hit": False,
-                        }
+                    pending_signal = {"strategy": strategy}
 
             # 3. Track Equity Curve & Daily Drawdown
             if capital > peak_capital:

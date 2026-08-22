@@ -98,6 +98,7 @@ class NSESafetyFilter:
         daily_turnover_cr: float = 50.0,
         safety_metrics: NSESafetyMetrics | None = None,
         is_pullback_setup: bool = False,
+        stock_info: Any | None = None,
     ) -> HardGateResult:
         """Executes instant binary disqualification gates before soft scoring."""
         clean_sym = symbol.replace(".NS", "").replace(".BO", "").strip().upper()
@@ -158,6 +159,27 @@ class NSESafetyFilter:
                 rejection_reason=reason,
                 details={"safety_score": safety_metrics.safety_score},
             )
+
+        # 5. Fundamental Quality Safety Floor (if fundamental metrics are present)
+        if stock_info is not None:
+            pledged = getattr(stock_info, "pledged_pct", 0.0) or 0.0
+            if pledged > 40.0:
+                return HardGateResult(
+                    passed=False,
+                    rejection_category="FUNDAMENTALS",
+                    rejection_reason=f"Severe Governance Risk: Promoter pledged shares {pledged:.1f}% > 40.0% safety limit",
+                    details={"pledged_pct": pledged},
+                )
+
+            roce = getattr(stock_info, "roce_pct", None)
+            debt_eq = getattr(stock_info, "debt_to_equity", None)
+            if roce is not None and roce < -5.0 and debt_eq is not None and debt_eq > 3.0:
+                return HardGateResult(
+                    passed=False,
+                    rejection_category="FUNDAMENTALS",
+                    rejection_reason=f"Severe Financial Distress: Negative ROCE ({roce:.1f}%) with high Debt/Equity ({debt_eq:.1f})",
+                    details={"roce_pct": roce, "debt_to_equity": debt_eq},
+                )
 
         # 5. Trend Baseline Gate (For long trend momentum)
         if ema_50 and current_price < (ema_50 * 0.985) and not is_pullback_setup:

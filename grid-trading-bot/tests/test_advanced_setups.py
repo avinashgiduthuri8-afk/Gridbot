@@ -9,7 +9,7 @@ from engine.signals.setups import TechnicalSetupDetector
 def test_vcp_breakout_detection():
     detector = TechnicalSetupDetector()
 
-    # VCP: Tight BB bandwidth (< 0.10), price near 20d resistance, volume surge, bullish EMA alignment
+    # VCP: Tight BB bandwidth (<= 8.5%), price near 20d resistance, volume surge, bullish EMA alignment
     snap_1d = IndicatorSnapshot(
         symbol="TRENT",
         timeframe="1d",
@@ -21,7 +21,7 @@ def test_vcp_breakout_detection():
         resistance_20=4980.0,
         support_20=4650.0,
         volume_surge_ratio=1.65,
-        bb_bandwidth=0.08,  # Tight base
+        bb_bandwidth=7.8,  # Tight base in percentage (7.8%)
         rsi=64.0,
         vwap=4950.0,
     )
@@ -61,13 +61,14 @@ def test_pocket_pivot_detection():
 def test_nr7_squeeze_detection():
     detector = TechnicalSetupDetector()
 
-    # NR7: Extreme squeeze (BB bandwidth < 0.08), above VWAP, volume surge >= 1.2
+    # NR7: Extreme squeeze (BB bandwidth <= 7.0%), above VWAP, volume surge >= 1.25
     snap_1d = IndicatorSnapshot(
         symbol="BEL",
         timeframe="1d",
         last_price=310.0,
         open=308.0,
-        bb_bandwidth=0.06,  # NR7 compression
+        bb_bandwidth=5.8,  # NR7 compression in percentage (5.8%)
+        is_nr7=True,
         vwap=308.5,
         volume_surge_ratio=1.35,
         rsi=56.0,

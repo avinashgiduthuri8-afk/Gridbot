@@ -19,7 +19,7 @@ def test_vcp_tightness_and_breakout_rules():
         ema_50=940.0,
         ema_200=900.0,
         volume_surge_ratio=1.8,
-        bb_bandwidth=0.075,
+        bb_bandwidth=7.5,
     )
     vcp_eval = detector._detect_vcp(snap_valid)
     assert vcp_eval.is_triggered is True
@@ -33,7 +33,7 @@ def test_vcp_tightness_and_breakout_rules():
         last_price=1000.0,
         resistance_20=1005.0,
         volume_surge_ratio=1.8,
-        bb_bandwidth=0.14,
+        bb_bandwidth=14.0,
         ema_20=980.0,
         ema_50=940.0,
     )

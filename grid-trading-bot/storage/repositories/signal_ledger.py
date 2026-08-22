@@ -85,18 +85,18 @@ class SignalLedgerRepository:
             new_status = sig["status"]
             r_multiple = 0.0
 
-            # 1. Target 2 Hit (+3.5R)
-            if curr_price >= t2:
+            # 1. Stopped Out (-1.0R) - Conservative priority
+            if curr_price <= sl:
+                new_status = "STOPPED_OUT"
+                r_multiple = -1.0
+            # 2. Target 2 Hit (+3.5R)
+            elif curr_price >= t2:
                 new_status = "HIT_T2"
                 r_multiple = round((t2 - entry) / risk, 2)
-            # 2. Target 1 Hit (+2.0R)
+            # 3. Target 1 Hit (+2.0R)
             elif curr_price >= t1:
                 new_status = "HIT_T1"
                 r_multiple = round((t1 - entry) / risk, 2)
-            # 3. Stopped Out (-1.0R)
-            elif curr_price <= sl:
-                new_status = "STOPPED_OUT"
-                r_multiple = -1.0
 
             if new_status != sig["status"]:
                 pnl_pct = ((curr_price - entry) / entry) * 100.0

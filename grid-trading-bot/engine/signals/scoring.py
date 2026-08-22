@@ -104,6 +104,7 @@ class SignalScoringEngine:
         sector_name: str = "General",
         sector_rank: int = 0,
         delivery_pct: float | None = None,
+        stock_info: Any | None = None,
     ) -> ScoredSignal:
         """Evaluates all dimensions, enforces hard quality gates, and constructs ScoredSignal."""
         rationale: list[str] = []
@@ -200,7 +201,7 @@ class SignalScoringEngine:
 
         # 8. News & Corporate Sentiment (Max 5 pts)
         news_pts = min(sentiment.score, 5.0)
-        if sentiment.sentiment == "POSITIVE":
+        if sentiment.sentiment == "POSITIVE" and sentiment.score > 0.0:
             rationale.append(f"News Sentiment: {sentiment.reason}")
 
         # Total Raw Score
@@ -224,6 +225,23 @@ class SignalScoringEngine:
             is_hard_vetoed = True
             final_score = min(final_score, 55.0)
             risks.append(f"⚠️ R:R REJECTED: {rr_plan.rejection_reason}")
+
+        # Fundamental Governance & Solvency Floor
+        if stock_info is not None:
+            pledged = getattr(stock_info, "pledged_pct", 0.0) or 0.0
+            if pledged > 40.0:
+                is_hard_vetoed = True
+                final_score = 0.0
+                risks.append(f"⚠️ GOVERNANCE RISK: High promoter pledging ({pledged:.1f}% > 40.0%)")
+            elif pledged > 20.0:
+                risks.append(f"Elevated promoter pledging ({pledged:.1f}%)")
+
+            roce = getattr(stock_info, "roce_pct", None)
+            debt_eq = getattr(stock_info, "debt_to_equity", None)
+            if roce is not None and roce < -5.0 and debt_eq is not None and debt_eq > 3.0:
+                is_hard_vetoed = True
+                final_score = 0.0
+                risks.append(f"⚠️ FINANCIAL DISTRESS: Negative ROCE ({roce:.1f}%) with high Debt/Equity ({debt_eq:.1f})")
 
         # Enforce Multi-Pillar Minimum Floor (prevent indicator stacking)
         # Technical trend >= 8, Setup quality >= 8, Volume/RS >= 6
