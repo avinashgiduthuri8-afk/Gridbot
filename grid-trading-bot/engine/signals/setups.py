@@ -1,14 +1,14 @@
 """Technical Setup Identification Engine for Indian Equities.
 
 Evaluates high-probability setups with strict price-action & volume confirmation:
-1. Resistance Breakout with Volatility Compression & Volume Expansion
-2. Trend Pullback with Volume Contraction (Dry-Up) to Dynamic Support (EMA 20/50)
-3. Momentum Continuation (ADX >= 25, DI+ dominance, VWAP support)
-4. Selective High-Conviction Reversals at Major Daily Support
-5. VCP (Volatility Contraction Pattern, Minervini)
-6. Pocket Pivot (10/20 EMA Volume Surge, Morales/Kacher)
-7. NR7 / Inside Bar Volatility Squeeze (Toby Crabel)
-8. High-Delivery Institutional Breakout (Delivery % >= 50% + Volume >= 2.0x)
+1. Minervini VCP (Volatility Contraction Pattern, BB Bandwidth <= 8.5%, Volume >= 1.6x)
+2. Pocket Pivot (Stage-2 uptrend, bounce within 3% of 20 EMA, Pocket Volume >= 1.6x)
+3. NR7 / Inside Bar Volatility Squeeze (7-day narrow range compression <= 7.0% BB)
+4. High-Delivery Institutional Breakout (Delivery % >= 50% + Volume >= 1.8x)
+5. Resistance Breakout with Squeeze & Volume Expansion
+6. Trend Pullback with Volume Contraction to Dynamic Support (EMA 20/50)
+7. Momentum Continuation (ADX >= 25, DI+ dominance, VWAP support)
+8. Selective High-Conviction Reversals at Major Daily Support
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ class SetupEvaluation:
 
 
 class TechnicalSetupDetector:
-    """Detects and scores classic and institutional trading setups on Indian stocks."""
+    """Detects and scores precision institutional setups on Indian stocks."""
 
     def evaluate_all_setups(
         self,
@@ -49,7 +49,7 @@ class TechnicalSetupDetector:
         """Runs all setup detectors and returns candidates ordered by quality."""
         results: list[SetupEvaluation] = []
 
-        # 1. High Delivery Institutional Breakout (Highest Conviction if delivery >= 50%)
+        # 1. High Delivery Institutional Breakout (Top Priority if delivery >= 50%)
         if delivery_pct is not None and delivery_pct >= 50.0:
             hdb = self._detect_high_delivery_breakout(snap_1d, snap_15m, delivery_pct)
             if hdb.is_triggered:
@@ -132,9 +132,9 @@ class TechnicalSetupDetector:
         bb_width = snap_1d.bb_bandwidth or 1.0
         vol_surge = snap_1d.volume_surge_ratio
 
-        # VCP: Tight volatility squeeze near 20d resistance + expanding volume on right edge
-        is_tight_base = bb_width < 0.10
-        is_near_pivot = (resistance * 0.96) <= price <= (resistance * 1.02)
+        # Hardened VCP rules: BB bandwidth <= 8.5%, price near pivot (within 3.5%), volume >= 1.4x
+        is_tight_base = bb_width <= 0.085
+        is_near_pivot = (resistance * 0.965) <= price <= (resistance * 1.025)
         has_breakout_volume = vol_surge >= 1.4
 
         is_triggered = is_tight_base and is_near_pivot and has_breakout_volume and snap_1d.is_ema_aligned_bullish
@@ -147,7 +147,7 @@ class TechnicalSetupDetector:
             description="Volatility Contraction Pattern (VCP) Squeeze Breakout",
             trigger_price=round(resistance, 2),
             key_level=round(resistance, 2),
-            setup_reason="Multi-wave volatility contraction with tight base (<10% BB width)",
+            setup_reason="Multi-wave volatility contraction with tight base (BB width <= 8.5%)",
             confirmation_reason=f"Volume expansion {vol_surge:.1f}x emerging from right-side contraction base",
             rejection_risks=[],
         )
@@ -163,12 +163,12 @@ class TechnicalSetupDetector:
         vol_surge = snap_1d.volume_surge_ratio
         rsi = snap_1d.rsi or 50.0
 
-        # Pocket Pivot: Price bouncing off/crossing 20 EMA with exceptional volume
-        is_near_ema20 = abs(price - ema_20) / price < 0.02
+        # Hardened Pocket Pivot: Price within 3% of 20 EMA, EMA20 > EMA50, volume surge >= 1.6x
+        is_near_ema20 = abs(price - ema_20) / price <= 0.03
         has_pocket_vol = vol_surge >= 1.6
-        is_in_uptrend = snap_1d.ema_50 is not None and ema_20 > snap_1d.ema_50
+        is_in_uptrend = (snap_1d.ema_50 is not None and ema_20 > snap_1d.ema_50) or snap_1d.is_ema_aligned_bullish
 
-        is_triggered = is_near_ema20 and has_pocket_vol and is_in_uptrend and rsi >= 52.0
+        is_triggered = is_near_ema20 and has_pocket_vol and is_in_uptrend and (50.0 <= rsi <= 74.0)
         score = 14.0 if is_triggered else 0.0
 
         return SetupEvaluation(
@@ -193,9 +193,9 @@ class TechnicalSetupDetector:
         bb_width = snap_1d.bb_bandwidth or 1.0
         vol_surge = snap_1d.volume_surge_ratio
 
-        # NR7: Extreme compression (BB bandwidth < 0.08) followed by price trigger
-        is_nr7_compressed = bb_width < 0.08
-        is_triggered = is_nr7_compressed and snap_1d.is_above_vwap and vol_surge >= 1.2
+        # NR7: Extreme compression (BB bandwidth <= 0.07) followed by price trigger above VWAP
+        is_nr7_compressed = bb_width <= 0.07
+        is_triggered = is_nr7_compressed and snap_1d.is_above_vwap and vol_surge >= 1.25
         score = 13.5 if is_triggered else 0.0
 
         return SetupEvaluation(

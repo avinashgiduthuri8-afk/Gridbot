@@ -1,21 +1,7 @@
-"""Weighted Signal Scoring & Quality Gate Engine for Indian Equities.
+"""Institutional Signal Scoring & Expectancy Engine for Indian Equities.
 
-Evaluates candidates across 8 distinct institutional dimensions (Total 100 points):
-1. Technical Trend (20 pts)
-2. Momentum & Oscillators (15 pts)
-3. Volume & VWAP Confirmation (15 pts)
-4. Price Action & Setup Quality (15 pts)
-5. Multi-Timeframe Alignment (15 pts)
-6. Market Regime Fit (10 pts)
-7. Sector Strength & Alpha (5 pts)
-8. News & Corporate Sentiment (5 pts)
-
-Applies hard pre-scoring rejection gates:
-- Extreme Overextension (ATR distance) -> REJECT
-- R:R < 2.0 or Overhead Resistance Cap -> REJECT
-- Multi-Timeframe Conflict (Counter-trend) -> REJECT
-- Adverse Corporate News / Event Risk -> REJECT
-- Hostile Market Regime -> REJECT / Heavy Cap
+Evaluates 8 weighted dimensions, enforces binary hard quality gates,
+calculates the Institutional Expectancy Index (IEI), and calibrates statistical confidence.
 """
 
 from __future__ import annotations
@@ -85,6 +71,7 @@ class ScoredSignal:
     rationale: list[str] = field(default_factory=list)
     rejection_risks: list[str] = field(default_factory=list)
     extension: ExtensionMetrics | None = None
+    iei_score: float = 0.0            # Institutional Expectancy Index
     timestamp: str = ""
 
     @property
@@ -116,6 +103,7 @@ class SignalScoringEngine:
         extension: ExtensionMetrics | None = None,
         sector_name: str = "General",
         sector_rank: int = 0,
+        delivery_pct: float | None = None,
     ) -> ScoredSignal:
         """Evaluates all dimensions, enforces hard quality gates, and constructs ScoredSignal."""
         rationale: list[str] = []
@@ -143,60 +131,68 @@ class SignalScoringEngine:
         mom_pts = 0.0
         rsi = snap_1d.rsi or 50.0
         if 55.0 <= rsi <= 72.0:
-            mom_pts += 8.0
-            rationale.append(f"RSI in Bullish Acceleration Zone ({rsi:.1f})")
-        elif 50.0 <= rsi < 55.0 or (72.0 < rsi <= 78.0):
-            mom_pts += 5.0
-        elif 40.0 <= rsi < 50.0:
+            mom_pts += 7.0
+            rationale.append(f"Optimal Bullish RSI Momentum ({rsi:.1f})")
+        elif 45.0 <= rsi < 55.0:
+            mom_pts += 4.0
+        elif rsi > 76.0:
             mom_pts += 2.0
+            risks.append(f"Elevated RSI ({rsi:.1f}) near overbought")
 
         if snap_1d.macd_hist and snap_1d.macd_hist > 0:
-            mom_pts += 4.0
-            rationale.append("MACD Histogram Bullish & Expanding")
-
-        if snap_1d.macd_line and snap_1d.macd_signal and snap_1d.macd_line > snap_1d.macd_signal:
-            mom_pts += 3.0
+            mom_pts += 5.0
+            if snap_1d.macd_line and snap_1d.macd_signal and snap_1d.macd_line > snap_1d.macd_signal:
+                mom_pts += 3.0
+                rationale.append("MACD Bullish Cross with expanding positive histogram")
 
         mom_pts = min(mom_pts, 15.0)
 
-        # 3. Volume & VWAP (Max 15 pts)
+        # 3. Volume & Institutional Flow (Max 15 pts)
         vol_pts = 0.0
-        v_surge = snap_1d.volume_surge_ratio
-        if v_surge >= 2.0:
+        vol_surge = snap_1d.volume_surge_ratio
+        if vol_surge >= 2.0:
             vol_pts += 10.0
-            rationale.append(f"Exceptional Volume Surge ({v_surge:.1f}x 20d SMA)")
-        elif v_surge >= 1.4:
+            rationale.append(f"Heavy Institutional Volume Surge ({vol_surge:.1f}x 20DMA)")
+        elif vol_surge >= 1.4:
             vol_pts += 7.0
-            rationale.append(f"Confirmed Volume Expansion ({v_surge:.1f}x 20d SMA)")
-        elif v_surge >= 1.0:
-            vol_pts += 4.0
+            rationale.append(f"Volume Surge ({vol_surge:.1f}x 20DMA)")
+        elif setup.setup_type == SignalType.PULLBACK and vol_surge < 1.0:
+            vol_pts += 8.0
+            rationale.append(f"Constructive Volume Dry-Up on Pullback ({vol_surge:.1f}x)")
 
         if snap_1d.is_above_vwap:
             vol_pts += 5.0
-            rationale.append("Price Holding Firmly Above VWAP")
+            rationale.append("Price trading firmly above VWAP")
+        else:
+            risks.append("Price trading below VWAP intraday")
 
         vol_pts = min(vol_pts, 15.0)
 
-        # 4. Price Action & Setup Quality (Max 15 pts)
+        # 4. Price Action Setup Quality (Max 15 pts)
         pa_pts = min(setup.quality_score, 15.0)
-        if setup.description:
-            rationale.append(setup.description)
+        if setup.is_triggered:
+            rationale.append(f"Triggered Setup: {setup.description}")
 
         # 5. Multi-Timeframe Confluence (Max 15 pts)
-        mtf_pts = min(mtf.confluence_score, 15.0)
+        mtf_pts = 0.0
         if mtf.is_aligned_bullish:
-            rationale.append("Triple Timeframe Alignment (1D + 1H + 15M Bullish)")
-        elif mtf.trend_1d == "BEARISH" and setup.setup_type != SignalType.REVERSAL:
-            risks.append("Counter-trend: Trading against Daily Bearish Trend")
+            mtf_pts += 15.0
+            rationale.append("Full Triple-Timeframe Bullish Alignment (1D + 1H + 15M)")
+        else:
+            if mtf.trend_1d == "BULLISH":
+                mtf_pts += 6.0
+            if mtf.trend_1h == "BULLISH":
+                mtf_pts += 5.0
+            if mtf.trend_15m == "BULLISH":
+                mtf_pts += 4.0
 
-        # 6. Market Regime Fit (Max 10 pts)
-        regime_pts = min(regime.regime_score, 10.0)
-        rationale.append(f"Market Regime: {regime.regime.value} ({regime.summary})")
-        if regime.regime in (MarketRegime.STRONG_BEARISH, MarketRegime.HIGH_VOLATILITY):
-            risks.append(f"Hostile market regime: {regime.regime.value}")
+        mtf_pts = min(mtf_pts, 15.0)
 
-        # 7. Sector Strength (Max 5 pts)
-        sec_pts = min(sector_score, 5.0)
+        # 6. Market Regime Compatibility (Max 10 pts)
+        regime_pts = min(getattr(regime, "regime_score", getattr(regime, "strength_score", 5.0)), 10.0)
+
+        # 7. Sector Strength & Tailwinds (Max 5 pts)
+        sec_pts = min(sector_score * 0.05, 5.0)
         if sec_pts >= 4.0:
             rationale.append(f"Sector Outperformance: {sector_name} (Rank #{sector_rank})")
         elif sec_pts <= 2.0:
@@ -226,14 +222,25 @@ class SignalScoringEngine:
 
         if not rr_plan.is_acceptable:
             is_hard_vetoed = True
-            final_score = min(final_score, 55.0)  # Cannot qualify if R:R is rejected
+            final_score = min(final_score, 55.0)
             risks.append(f"⚠️ R:R REJECTED: {rr_plan.rejection_reason}")
 
-        if mtf.trend_1d == "BEARISH" and setup.setup_type not in (SignalType.REVERSAL,):
-            # Counter-trend against daily bear market
-            final_score = min(final_score, 50.0)
+        # Enforce Multi-Pillar Minimum Floor (prevent indicator stacking)
+        # Technical trend >= 8, Setup quality >= 8, Volume/RS >= 6
+        if not is_hard_vetoed:
+            if trend_pts < 8.0 or pa_pts < 8.0 or vol_pts < 6.0:
+                final_score = min(final_score, 74.0)
 
         final_score = max(0.0, min(100.0, round(final_score, 1)))
+
+        # Institutional Expectancy Index (IEI)
+        # IEI = (Setup Quality * 0.40) + (Mansfield RS Alpha * 0.30) + (Sector Rank Score * 0.20) + (Delivery Score * 0.10)
+        del_score = (delivery_pct / 10.0) if delivery_pct else 5.0
+        rs_alpha = max(0.0, min(15.0, rs_metrics.score if hasattr(rs_metrics, "score") else 10.0))
+        sec_rank_score = max(1.0, 10.0 - (sector_rank * 0.8))
+
+        iei = (pa_pts * 0.40 * 6.66) + (rs_alpha * 0.30 * 6.66) + (sec_rank_score * 0.20 * 10.0) + (del_score * 0.10 * 10.0)
+        iei_score = round(max(0.0, min(100.0, iei)), 1)
 
         # Tier Classification
         if is_hard_vetoed:
@@ -303,4 +310,5 @@ class SignalScoringEngine:
             rationale=rationale,
             rejection_risks=risks,
             extension=extension,
+            iei_score=iei_score,
         )

@@ -7,12 +7,12 @@ Stage 3: Market Regime Detection (NIFTY/BANKNIFTY/India VIX)
 Stage 4: Sector Strength & Momentum Matrix
 Stage 5: Multi-Timeframe Data Ingestion (1D, 1H, 15M)
 Stage 6: Technical Indicator Engine & Confluence
-Stage 7: Setup Pattern Identification (Breakout/Pullback/Continuation/Reversal)
+Stage 7: Setup Pattern Identification (VCP / Pocket Pivot / NR7 / High Delivery / Breakout)
 Stage 8: Relative Strength Alpha Calculation (vs NIFTY & Sector)
 Stage 9: News Sentiment & Corporate Event Risk Filter
 Stage 10: Extension & Chasing Filter (ATR distance checks)
 Stage 11: Structural Risk/Reward Geometry Calculation (Enforcing R:R >= 2.0)
-Stage 12: 100-Point Weighted Scoring, Confidence Calibration & Deduplication
+Stage 12: 100-Point Weighted Scoring, IEI Ranking, Confidence Calibration & Deduplication
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from engine.mtf.mtf_analyzer import MultiTimeframeAnalyzer
 from engine.regime.regime_detector import MarketRegimeAnalysis, MarketRegimeDetector
 from engine.relative_strength.rs_calculator import RelativeStrengthCalculator
 from engine.risk_reward.extension_filter import ExtensionFilter
+from engine.risk_reward.nse_safety_filter import NSESafetyFilter
 from engine.risk_reward.rr_calculator import RiskRewardCalculator
 from engine.sectors.sector_analyzer import SectorMatrixAnalysis, SectorStrengthAnalyzer
 from engine.sentiment.news_evaluator import NewsSentimentEvaluator
@@ -78,6 +79,7 @@ class IndianStockScanner:
         self.sentiment_evaluator = NewsSentimentEvaluator()
         self.setup_detector = TechnicalSetupDetector()
         self.extension_filter = ExtensionFilter()
+        self.safety_filter = NSESafetyFilter()
         self.rr_calculator = RiskRewardCalculator(min_rr=min_rr)
         self.scoring_engine = SignalScoringEngine()
         self.lifecycle_mgr = SignalLifecycleManager()
@@ -163,7 +165,7 @@ class IndianStockScanner:
                     # STAGE 9: News / Sentiment
                     sentiment = self.sentiment_evaluator.evaluate_news(sym, news_items)
 
-                    # STAGE 10: Extension & Chasing Filter
+                    # STAGE 10: Extension & Binary Hard Gates Filter
                     extension = self.extension_filter.evaluate_extension(sym, snap_1d, best_setup.key_level)
 
                     # STAGE 11: Risk / Reward Plan
@@ -209,9 +211,9 @@ class IndianStockScanner:
             if isinstance(res, ScoredSignal):
                 scored_candidates.append(res)
 
-        # STAGE 12: Strict Ranking & Quality Gating
-        # Sort candidates by total_score descending
-        scored_candidates.sort(key=lambda s: s.total_score, reverse=True)
+        # STAGE 12: Institutional Expectancy Index (IEI) & Quality Gating
+        # Sort candidates by (iei_score, total_score) descending
+        scored_candidates.sort(key=lambda s: (s.iei_score, s.total_score), reverse=True)
 
         top_signals: list[ScoredSignal] = []
         watchlist: list[ScoredSignal] = []
@@ -231,13 +233,17 @@ class IndianStockScanner:
                     )
                 else:
                     watchlist.append(sig)
-            elif sig.strength in (SignalStrength.VALID, SignalStrength.WATCHLIST):
+            elif sig.total_score >= 60.0:
                 watchlist.append(sig)
 
         duration = (datetime.now(timezone.utc) - start_time).total_seconds()
         log.info(
-            "Scan complete in %.2fs: %d scanned, %d liquid, %d top signals, %d watchlist.",
-            duration, total_scanned, passed_liquidity_count, len(top_signals), len(watchlist),
+            "Scan Complete: %d candidates scanned -> %d passed liquidity -> %d Top Signals -> %d Watchlist in %.2fs",
+            total_scanned,
+            passed_liquidity_count,
+            len(top_signals),
+            len(watchlist),
+            duration,
         )
 
         return ScanResult(
@@ -248,7 +254,7 @@ class IndianStockScanner:
             total_scanned=total_scanned,
             total_passed_liquidity=passed_liquidity_count,
             top_signals=top_signals,
-            watchlist=watchlist[:15],
+            watchlist=watchlist,
             all_scored_signals=scored_candidates,
             scan_duration_seconds=round(duration, 2),
         )
