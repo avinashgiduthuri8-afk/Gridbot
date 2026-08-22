@@ -114,6 +114,7 @@ export interface ScoredSignalResponse {
   signal_type: 'BREAKOUT' | 'PULLBACK' | 'MOMENTUM_CONTINUATION' | 'REVERSAL' | string;
   strength: 'VERY_STRONG' | 'STRONG' | 'VALID' | 'WATCHLIST' | 'REJECT' | string;
   total_score: number;
+  iei_score?: number;
   breakdown: ScoreBreakdown;
   risk_reward: RiskRewardPlanResponse;
   confidence?: 'HIGH' | 'MEDIUM' | 'LOW' | string;

@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { api } from '../services/api';
 import type { ScanResponse, ScoredSignalResponse, StockInfoResponse } from '../types/dashboard';
 import { MarketRegimeBar } from '../components/common/MarketRegimeBar';
 import { SignalCard } from '../components/common/SignalCard';
 import { SignalDetailModal } from '../components/common/SignalDetailModal';
 import { StockDetailDrawer } from '../components/common/StockDetailDrawer';
-import { Info } from 'lucide-react';
+import { Info, ExternalLink, Zap, Filter, Award } from 'lucide-react';
 
 export const ScannerPage: React.FC = () => {
   const [universe, setUniverse] = useState<string>('NIFTY_100');
@@ -16,6 +16,11 @@ export const ScannerPage: React.FC = () => {
   const [selectedSignal, setSelectedSignal] = useState<ScoredSignalResponse | null>(null);
   const [drawerSymbol, setDrawerSymbol] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Filters state
+  const [selectedSetupFilter, setSelectedSetupFilter] = useState<string>('ALL');
+  const [selectedCapFilter, setSelectedCapFilter] = useState<string>('ALL');
+  const [topOnlyFilter, setTopOnlyFilter] = useState<boolean>(false);
 
   // Load initial cached scan on mount
   useEffect(() => {
@@ -62,8 +67,50 @@ export const ScannerPage: React.FC = () => {
     }
   };
 
+  // Combine signals and apply filters
+  const displayedSignals = useMemo(() => {
+    if (!scanResult) return [];
+    let list = topOnlyFilter ? [...scanResult.top_signals] : [...scanResult.top_signals, ...scanResult.watchlist];
+
+    // Deduplicate by symbol
+    const seen = new Set<string>();
+    list = list.filter((s) => {
+      if (seen.has(s.symbol)) return false;
+      seen.add(s.symbol);
+      return true;
+    });
+
+    // Setup filter
+    if (selectedSetupFilter !== 'ALL') {
+      list = list.filter((s) => {
+        const stype = String(s.signal_type).toUpperCase();
+        if (selectedSetupFilter === 'VCP') return stype.includes('VCP');
+        if (selectedSetupFilter === 'POCKET') return stype.includes('POCKET');
+        if (selectedSetupFilter === 'NR7') return stype.includes('NR7');
+        if (selectedSetupFilter === 'DELIVERY') return stype.includes('DELIVERY');
+        return true;
+      });
+    }
+
+    // Market cap filter
+    if (selectedCapFilter !== 'ALL') {
+      list = list.filter((s) => {
+        const cleanSym = s.symbol.replace('.NS', '').replace('.BO', '');
+        const info = batchInfoMap[cleanSym];
+        if (!info) return true;
+        const cat = (info.market_cap_category || '').toLowerCase();
+        if (selectedCapFilter === 'LARGE') return cat.includes('large');
+        if (selectedCapFilter === 'MID') return cat.includes('mid');
+        if (selectedCapFilter === 'SMALL') return cat.includes('small');
+        return true;
+      });
+    }
+
+    return list;
+  }, [scanResult, topOnlyFilter, selectedSetupFilter, selectedCapFilter, batchInfoMap]);
+
   const getDeliveryBadge = (pct?: number) => {
-    if (pct === undefined || pct === null) return null;
+    if (pct === undefined || pct === null) return <span style={{ color: '#6B7280' }}>--</span>;
     let bg = '#374151';
     let color = '#9CA3AF';
     if (pct >= 50) {
@@ -76,7 +123,7 @@ export const ScannerPage: React.FC = () => {
     return (
       <span
         style={{
-          padding: '2px 6px',
+          padding: '2px 7px',
           borderRadius: '4px',
           fontSize: '11px',
           fontWeight: 700,
@@ -102,25 +149,25 @@ export const ScannerPage: React.FC = () => {
           alignItems: 'center',
           flexWrap: 'wrap',
           backgroundColor: '#1F2937',
-          padding: '16px 20px',
+          padding: '18px 22px',
           borderRadius: '12px',
           border: '1px solid #374151',
           gap: '14px',
         }}
       >
         <div>
-          <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#F9FAFB', margin: 0 }}>
-            Institutional Indian Stock Scanner
+          <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#F9FAFB', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Zap size={22} color="#10B981" /> Institutional Indian Stock Scanner
           </h2>
           <p style={{ fontSize: '13px', color: '#9CA3AF', margin: '4px 0 0 0' }}>
-            12-Stage multi-timeframe confluence engine (1D Structure + 1H Setup + 15M Trigger)
+            12-Stage multi-timeframe confluence engine (1D Base Structure + 1H Setup + 15M Trigger)
           </p>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           {/* Universe Selector */}
           <div>
-            <label style={{ fontSize: '11px', color: '#9CA3AF', display: 'block', marginBottom: '2px' }}>
+            <label style={{ fontSize: '11px', color: '#9CA3AF', display: 'block', marginBottom: '2px', fontWeight: 700 }}>
               STOCK UNIVERSE
             </label>
             <select
@@ -131,7 +178,7 @@ export const ScannerPage: React.FC = () => {
                 color: '#F9FAFB',
                 border: '1px solid #4B5563',
                 borderRadius: '6px',
-                padding: '6px 12px',
+                padding: '7px 12px',
                 fontSize: '13px',
                 fontWeight: 600,
                 cursor: 'pointer',
@@ -146,7 +193,7 @@ export const ScannerPage: React.FC = () => {
 
           {/* Max Final Signals */}
           <div>
-            <label style={{ fontSize: '11px', color: '#9CA3AF', display: 'block', marginBottom: '2px' }}>
+            <label style={{ fontSize: '11px', color: '#9CA3AF', display: 'block', marginBottom: '2px', fontWeight: 700 }}>
               MAX SIGNALS
             </label>
             <select
@@ -157,7 +204,7 @@ export const ScannerPage: React.FC = () => {
                 color: '#F9FAFB',
                 border: '1px solid #4B5563',
                 borderRadius: '6px',
-                padding: '6px 12px',
+                padding: '7px 12px',
                 fontSize: '13px',
                 fontWeight: 600,
                 cursor: 'pointer',
@@ -180,14 +227,14 @@ export const ScannerPage: React.FC = () => {
                 color: '#FFFFFF',
                 border: 'none',
                 borderRadius: '6px',
-                padding: '8px 20px',
-                fontSize: '14px',
+                padding: '8px 22px',
+                fontSize: '13px',
                 fontWeight: 700,
                 cursor: scanning ? 'not-allowed' : 'pointer',
-                transition: 'all 0.2s ease',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '6px',
+                gap: '8px',
+                boxShadow: '0 4px 6px -1px rgba(16, 185, 129, 0.4)',
               }}
             >
               {scanning ? '⏳ Scanning Market...' : '⚡ Scan Indian Market'}
@@ -196,291 +243,254 @@ export const ScannerPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Filter Toolbar */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          backgroundColor: '#1F2937',
+          padding: '12px 20px',
+          borderRadius: '10px',
+          border: '1px solid #374151',
+          gap: '12px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '12px', color: '#9CA3AF', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <Filter size={14} /> SETUPS:
+          </span>
+          {[
+            { id: 'ALL', label: 'All Setups' },
+            { id: 'VCP', label: 'Minervini VCP' },
+            { id: 'POCKET', label: 'Pocket Pivot' },
+            { id: 'NR7', label: 'NR7 Squeeze' },
+            { id: 'DELIVERY', label: 'High Delivery' },
+          ].map((f) => (
+            <button
+              key={f.id}
+              onClick={() => setSelectedSetupFilter(f.id)}
+              style={{
+                padding: '4px 10px',
+                borderRadius: '6px',
+                fontSize: '12px',
+                fontWeight: 600,
+                border: 'none',
+                backgroundColor: selectedSetupFilter === f.id ? '#2563EB' : '#111827',
+                color: selectedSetupFilter === f.id ? '#FFFFFF' : '#9CA3AF',
+                cursor: 'pointer',
+              }}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <select
+            value={selectedCapFilter}
+            onChange={(e) => setSelectedCapFilter(e.target.value)}
+            style={{
+              backgroundColor: '#111827',
+              color: '#F9FAFB',
+              border: '1px solid #4B5563',
+              borderRadius: '6px',
+              padding: '4px 10px',
+              fontSize: '12px',
+            }}
+          >
+            <option value="ALL">All Market Caps</option>
+            <option value="LARGE">Large Cap (&gt;₹20k Cr)</option>
+            <option value="MID">Mid Cap</option>
+            <option value="SMALL">Small Cap</option>
+          </select>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#E5E7EB' }}>
+            <input
+              type="checkbox"
+              checked={topOnlyFilter}
+              onChange={(e) => setTopOnlyFilter(e.target.checked)}
+              style={{ width: '14px', height: '14px', accentColor: '#10B981' }}
+            />
+            <span style={{ fontWeight: 600 }}>Top 1–3 Picks Only</span>
+          </label>
+        </div>
+      </div>
+
       {error && (
-        <div
-          style={{
-            padding: '12px 16px',
-            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-            border: '1px solid #7F1D1D',
-            borderRadius: '8px',
-            color: '#FCA5A5',
-            fontSize: '13px',
-          }}
-        >
+        <div style={{ padding: '12px 16px', backgroundColor: '#450A0A', border: '1px solid #7F1D1D', borderRadius: '8px', color: '#FCA5A5', fontSize: '13px' }}>
           <strong>Scanner Notice:</strong> {error}
         </div>
       )}
 
-      {/* Metrics Banner */}
-      {scanResult && (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-            gap: '12px',
-          }}
-        >
-          <div style={{ backgroundColor: '#1F2937', padding: '12px 16px', borderRadius: '8px', border: '1px solid #374151' }}>
-            <div style={{ fontSize: '11px', color: '#9CA3AF' }}>TOTAL CANDIDATES</div>
-            <div style={{ fontSize: '18px', fontWeight: 800, color: '#F9FAFB' }}>{scanResult.total_scanned}</div>
-          </div>
-          <div style={{ backgroundColor: '#1F2937', padding: '12px 16px', borderRadius: '8px', border: '1px solid #374151' }}>
-            <div style={{ fontSize: '11px', color: '#9CA3AF' }}>PASSED LIQUIDITY</div>
-            <div style={{ fontSize: '18px', fontWeight: 800, color: '#60A5FA' }}>{scanResult.total_passed_liquidity}</div>
-          </div>
-          <div style={{ backgroundColor: '#1F2937', padding: '12px 16px', borderRadius: '8px', border: '1px solid #374151' }}>
-            <div style={{ fontSize: '11px', color: '#9CA3AF' }}>TOP CONVICTION SETUPS</div>
-            <div style={{ fontSize: '18px', fontWeight: 800, color: '#10B981' }}>{scanResult.top_signals.length}</div>
-          </div>
-          <div style={{ backgroundColor: '#1F2937', padding: '12px 16px', borderRadius: '8px', border: '1px solid #374151' }}>
-            <div style={{ fontSize: '11px', color: '#9CA3AF' }}>WATCHLIST CANDIDATES</div>
-            <div style={{ fontSize: '18px', fontWeight: 800, color: '#F59E0B' }}>{scanResult.watchlist.length}</div>
-          </div>
-          <div style={{ backgroundColor: '#1F2937', padding: '12px 16px', borderRadius: '8px', border: '1px solid #374151' }}>
-            <div style={{ fontSize: '11px', color: '#9CA3AF' }}>SCAN DURATION</div>
-            <div style={{ fontSize: '18px', fontWeight: 800, color: '#D1D5DB' }}>{scanResult.scan_duration_seconds}s</div>
-          </div>
-        </div>
-      )}
-
-      {/* TOP 1 - 3 HIGH-CONVICTION SIGNALS SECTION */}
-      <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-          <h3 style={{ fontSize: '18px', fontWeight: 800, color: '#F9FAFB', margin: 0 }}>
-            🌟 High-Conviction Signals (Quality &gt; Quantity)
+      {/* Top Flash Cards Grid (Top 3 Signals) */}
+      {scanResult && scanResult.top_signals.length > 0 && (
+        <div>
+          <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#F9FAFB', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Award size={18} color="#F59E0B" /> Top High-Conviction Institutional Opportunities
           </h3>
-          <span style={{ fontSize: '12px', color: '#9CA3AF' }}>
-            Strictly gated by Score &gt;= 80 &amp; R:R &gt;= 2.0
-          </span>
-        </div>
-
-        {scanResult && scanResult.top_signals.length > 0 ? (
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-              gap: '16px',
-            }}
-          >
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
             {scanResult.top_signals.map((sig, idx) => (
               <SignalCard key={idx} signal={sig} onViewDetails={setSelectedSignal} />
             ))}
           </div>
-        ) : (
-          <div
-            style={{
-              padding: '30px',
-              backgroundColor: '#1F2937',
-              border: '1px dashed #4B5563',
-              borderRadius: '12px',
-              textAlign: 'center',
-              color: '#9CA3AF',
-            }}
-          >
-            {scanning
-              ? 'Analyzing price action, multi-timeframe confluence, and sector momentum...'
-              : 'No scans run yet or no setup met the strict 80+ conviction threshold. Click "Scan Indian Market" above.'}
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* ENHANCED WATCHLIST & SCREENED CANDIDATES TABLE WITH FUNDAMENTALS */}
-      {scanResult && scanResult.watchlist.length > 0 && (
-        <div
-          style={{
-            backgroundColor: '#1F2937',
-            border: '1px solid #374151',
-            borderRadius: '12px',
-            padding: '18px',
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-            <div>
-              <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#F9FAFB', margin: 0 }}>
-                📋 Screened Watchlist Candidates &amp; Fundamental Snapshot
-              </h3>
-              <span style={{ fontSize: '12px', color: '#9CA3AF' }}>
-                Click any symbol for complete Screener.in &amp; NSE delivery profile
-              </span>
-            </div>
-          </div>
+      {/* Enriched Live Scanner DataTable */}
+      <div style={{ backgroundColor: '#1F2937', padding: '20px', borderRadius: '12px', border: '1px solid #374151' }}>
+        <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#F9FAFB', marginBottom: '14px' }}>
+          Live Stock Setup &amp; Fundamental Matrix ({displayedSignals.length} candidates)
+        </h3>
 
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid #374151', color: '#9CA3AF' }}>
-                  <th style={{ padding: '10px' }}>SYMBOL</th>
-                  <th style={{ padding: '10px' }}>SECTOR</th>
-                  <th style={{ padding: '10px' }}>MKT CAP (₹ CR)</th>
-                  <th style={{ padding: '10px' }}>P/E (IND P/E)</th>
-                  <th style={{ padding: '10px' }}>ROCE / ROE</th>
-                  <th style={{ padding: '10px' }}>DELIVERY %</th>
-                  <th style={{ padding: '10px' }}>SETUP</th>
-                  <th style={{ padding: '10px' }}>ENTRY</th>
-                  <th style={{ padding: '10px' }}>STOP LOSS</th>
-                  <th style={{ padding: '10px' }}>TARGET 1</th>
-                  <th style={{ padding: '10px' }}>R:R</th>
-                  <th style={{ padding: '10px' }}>LINKS</th>
-                  <th style={{ padding: '10px' }}>ACTION</th>
-                </tr>
-              </thead>
-              <tbody>
-                {scanResult.watchlist.map((w, i) => {
-                  const cleanSym = w.symbol.replace('.NS', '');
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #374151', color: '#9CA3AF' }}>
+                <th style={{ padding: '10px' }}>SYMBOL &amp; SECTOR</th>
+                <th style={{ padding: '10px' }}>SETUP</th>
+                <th style={{ padding: '10px' }}>IEI SCORE</th>
+                <th style={{ padding: '10px' }}>CMP (₹)</th>
+                <th style={{ padding: '10px' }}>ENTRY / SL</th>
+                <th style={{ padding: '10px' }}>TARGET 1 / 2</th>
+                <th style={{ padding: '10px' }}>DELIVERY %</th>
+                <th style={{ padding: '10px' }}>ROCE %</th>
+                <th style={{ padding: '10px' }}>P/E vs IND</th>
+                <th style={{ padding: '10px', textAlign: 'center' }}>RESEARCH &amp; LINKS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {displayedSignals.length > 0 ? (
+                displayedSignals.map((sig, idx) => {
+                  const cleanSym = sig.symbol.replace('.NS', '').replace('.BO', '');
                   const info = batchInfoMap[cleanSym];
+                  const iei = sig.iei_score || sig.total_score;
+
                   return (
                     <tr
-                      key={i}
+                      key={idx}
                       style={{
                         borderBottom: '1px solid #1F2937',
                         color: '#E5E7EB',
-                        backgroundColor: i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.1)',
+                        cursor: 'pointer',
+                        transition: 'background-color 0.15s',
                       }}
+                      onClick={() => setDrawerSymbol(sig.symbol)}
+                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#111827')}
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                     >
                       <td style={{ padding: '10px' }}>
-                        <button
-                          onClick={() => setDrawerSymbol(cleanSym)}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: '#60A5FA',
-                            fontWeight: 800,
-                            fontSize: '13px',
-                            cursor: 'pointer',
-                            padding: 0,
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                          }}
-                          title="Open Stock Fundamentals Drawer"
-                        >
-                          {cleanSym} <Info size={12} />
-                        </button>
+                        <div style={{ fontWeight: 800, color: '#60A5FA', fontSize: '13px' }}>{sig.symbol}</div>
+                        <span style={{ fontSize: '10px', color: '#9CA3AF' }}>{sig.sector || 'Equities'}</span>
                       </td>
-
-                      <td style={{ padding: '10px', color: '#9CA3AF' }}>{w.sector}</td>
-
-                      <td style={{ padding: '10px' }}>
-                        {info ? (
-                          <div>
-                            <span style={{ fontWeight: 600 }}>₹{info.market_cap_cr.toLocaleString('en-IN')}</span>
-                            <span style={{ fontSize: '10px', color: '#9CA3AF', marginLeft: '4px' }}>
-                              ({info.market_cap_category.split(' ')[0]})
-                            </span>
-                          </div>
-                        ) : (
-                          '--'
-                        )}
-                      </td>
-
-                      <td style={{ padding: '10px' }}>
-                        {info ? (
-                          <span>
-                            <strong style={{ color: info.stock_pe <= info.industry_pe ? '#10B981' : '#F59E0B' }}>
-                              {info.stock_pe > 0 ? `${info.stock_pe.toFixed(1)}x` : 'N/A'}
-                            </strong>{' '}
-                            <span style={{ color: '#9CA3AF', fontSize: '11px' }}>({info.industry_pe}x)</span>
-                          </span>
-                        ) : (
-                          '--'
-                        )}
-                      </td>
-
-                      <td style={{ padding: '10px' }}>
-                        {info ? (
-                          <span>
-                            <span style={{ color: '#10B981', fontWeight: 600 }}>{info.roce_pct.toFixed(0)}%</span> /{' '}
-                            <span style={{ color: '#60A5FA' }}>{info.roe_pct.toFixed(0)}%</span>
-                          </span>
-                        ) : (
-                          '--'
-                        )}
-                      </td>
-
-                      <td style={{ padding: '10px' }}>{getDeliveryBadge(info?.delivery_pct)}</td>
 
                       <td style={{ padding: '10px' }}>
                         <span
                           style={{
-                            padding: '2px 6px',
-                            backgroundColor: '#374151',
+                            padding: '2px 7px',
                             borderRadius: '4px',
                             fontSize: '11px',
+                            fontWeight: 700,
+                            backgroundColor: '#1E3A8A',
+                            color: '#93C5FD',
                           }}
                         >
-                          {w.signal_type}
+                          {String(sig.signal_type).replace('_', ' ')}
                         </span>
                       </td>
 
-                      <td style={{ padding: '10px' }}>₹{w.risk_reward.entry_price.toLocaleString()}</td>
-                      <td style={{ padding: '10px', color: '#EF4444' }}>₹{w.risk_reward.stop_loss.toLocaleString()}</td>
-                      <td style={{ padding: '10px', color: '#10B981' }}>₹{w.risk_reward.target_1.toLocaleString()}</td>
-                      <td style={{ padding: '10px', fontWeight: 600 }}>{w.risk_reward.rr_ratio}x</td>
-
-                      {/* Direct External Links */}
                       <td style={{ padding: '10px' }}>
-                        <div style={{ display: 'flex', gap: '6px' }}>
-                          <a
-                            href={`https://www.nseindia.com/get-quotes/equity?symbol=${cleanSym}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            style={{ color: '#93C5FD', textDecoration: 'none', fontSize: '11px', fontWeight: 700 }}
-                            title="NSE India"
+                        <strong style={{ color: iei >= 80 ? '#10B981' : '#F59E0B', fontSize: '13px' }}>
+                          {iei.toFixed(1)}
+                        </strong>
+                      </td>
+
+                      <td style={{ padding: '10px', fontWeight: 700, fontFamily: 'monospace' }}>
+                        ₹{sig.risk_reward.entry_price.toFixed(2)}
+                      </td>
+
+                      <td style={{ padding: '10px', fontFamily: 'monospace' }}>
+                        <div style={{ color: '#10B981', fontWeight: 600 }}>E: ₹{sig.risk_reward.entry_price.toFixed(2)}</div>
+                        <div style={{ color: '#EF4444', fontSize: '11px' }}>SL: ₹{sig.risk_reward.stop_loss.toFixed(2)}</div>
+                      </td>
+
+                      <td style={{ padding: '10px', fontFamily: 'monospace' }}>
+                        <div style={{ color: '#34D399', fontWeight: 600 }}>T1: ₹{sig.risk_reward.target_1.toFixed(2)}</div>
+                        <div style={{ color: '#60A5FA', fontSize: '11px' }}>T2: ₹{sig.risk_reward.target_2.toFixed(2)}</div>
+                      </td>
+
+                      <td style={{ padding: '10px' }}>
+                        {getDeliveryBadge(info?.delivery_pct)}
+                      </td>
+
+                      <td style={{ padding: '10px', fontFamily: 'monospace' }}>
+                        {info?.roce_pct ? `${info.roce_pct.toFixed(1)}%` : '--'}
+                      </td>
+
+                      <td style={{ padding: '10px', fontSize: '11px', fontFamily: 'monospace' }}>
+                        {info?.stock_pe ? `${info.stock_pe.toFixed(1)}x / ${info.industry_pe?.toFixed(1) || '--'}x` : '--'}
+                      </td>
+
+                      <td style={{ padding: '10px', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                        <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                          <button
+                            onClick={() => setDrawerSymbol(sig.symbol)}
+                            style={{
+                              backgroundColor: '#374151',
+                              border: 'none',
+                              borderRadius: '4px',
+                              padding: '4px 8px',
+                              color: '#F9FAFB',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                            }}
+                            title="View Fundamentals & Ratios"
                           >
-                            NSE
-                          </a>
-                          <span style={{ color: '#4B5563' }}>|</span>
+                            <Info size={12} /> Details
+                          </button>
+
                           <a
                             href={`https://www.screener.in/company/${cleanSym}/consolidated/`}
                             target="_blank"
-                            rel="noreferrer"
-                            style={{ color: '#34D399', textDecoration: 'none', fontSize: '11px', fontWeight: 700 }}
-                            title="Screener.in"
+                            rel="noopener noreferrer"
+                            style={{
+                              backgroundColor: '#1E3A8A',
+                              color: '#93C5FD',
+                              padding: '4px 6px',
+                              borderRadius: '4px',
+                              textDecoration: 'none',
+                              fontSize: '11px',
+                              display: 'flex',
+                              alignItems: 'center',
+                            }}
+                            title="View on Screener.in"
                           >
-                            SCR
-                          </a>
-                          <span style={{ color: '#4B5563' }}>|</span>
-                          <a
-                            href={`https://in.tradingview.com/chart/?symbol=NSE:${cleanSym}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            style={{ color: '#E5E7EB', textDecoration: 'none', fontSize: '11px', fontWeight: 700 }}
-                            title="TradingView"
-                          >
-                            TV
+                            <ExternalLink size={12} />
                           </a>
                         </div>
                       </td>
-
-                      <td style={{ padding: '10px' }}>
-                        <button
-                          onClick={() => setSelectedSignal(w)}
-                          style={{
-                            padding: '4px 10px',
-                            backgroundColor: '#374151',
-                            border: 'none',
-                            borderRadius: '4px',
-                            color: '#F9FAFB',
-                            fontSize: '11px',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          View Breakdown
-                        </button>
-                      </td>
                     </tr>
                   );
-                })}
-              </tbody>
-            </table>
-          </div>
+                })
+              ) : (
+                <tr>
+                  <td colSpan={10} style={{ textAlign: 'center', padding: '30px', color: '#9CA3AF' }}>
+                    {scanning ? 'Analyzing Indian stock universe...' : 'No setups matching the selected criteria.'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
-      )}
+      </div>
 
-      {/* Rationale & Score Breakdown Modal */}
+      {/* Modals & Detail Drawers */}
       <SignalDetailModal signal={selectedSignal} onClose={() => setSelectedSignal(null)} />
-
-      {/* Stock Fundamentals & Profile Slide-over Drawer */}
       <StockDetailDrawer symbol={drawerSymbol} onClose={() => setDrawerSymbol(null)} />
     </div>
   );
