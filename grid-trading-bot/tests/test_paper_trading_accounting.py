@@ -50,7 +50,7 @@ from trading.portfolio_metrics import (
 )
 from trading.recovery import RecoveryManager
 from bot_telegram.formatters import format_paper_grids
-from utils.helpers import new_id, now_iso
+from utils.helpers import fmt_price, new_id, now_iso
 
 pytestmark = pytest.mark.anyio
 
@@ -532,3 +532,153 @@ def test_telegram_paper_formatter_matches_accounting():
     assert "Level: 2/5" in text
     assert "Net realized P&amp;L" in text
     assert "Paper Portfolio Totals" in text
+
+
+# ===========================================================================
+# 11. SHIBINR LOW-PRICED COIN PRECISION & P&L INTEGRITY
+# ===========================================================================
+
+def test_shibinr_price_precision_and_pnl_formatting():
+    """Verify that low-priced coins like SHIBINR (₹0.0022) retain full precision
+    and never display ₹0.00 in Telegram or dashboard formatting."""
+    # Magnitude tests for fmt_price
+    assert fmt_price(6500000.0) == "₹6,500,000.00"   # BTC (>=100 -> 2 dp)
+    assert fmt_price(258.16) == "₹258.16"            # TRUMP (>=100 -> 2 dp)
+    assert fmt_price(9.85) == "₹9.8500"              # DOGE (>=1 -> 4 dp)
+    assert fmt_price(0.052) == "₹0.052000"           # TRX (>=0.01 -> 6 dp)
+    assert fmt_price(0.0022) == "₹0.00220000"        # SHIB (>0 -> 8 dp)
+    assert fmt_price(0.00000123) == "₹0.00000123"    # PEPE (>0 -> 8 dp)
+    assert fmt_price(0.0) == "₹0.00"                 # Zero
+
+    # SHIBINR Paper Grid formatted output
+    shib_grid = {
+        "grid_id": "grd_shib_1",
+        "symbol": "SHIBINR",
+        "status": "active",
+        "mode": "paper",
+        "entry_price": 0.0022,
+        "dip_percentage": 5.0,
+        "profit_percentage": 5.0,
+        "current_level": 1,
+        "max_levels": 5,
+        "total_quantity": 909090.0,
+        "average_entry_price": 0.0022,
+        "total_investment": 2000.0,
+        "realized_profit": 0.0,
+        "completed_cycles": 0,
+    }
+
+    current_price = 0.00218
+    prices = {"SHIBINR": current_price}
+    text = format_paper_grids([shib_grid], prices=prices)
+
+    # Must contain full precision prices, not ₹0.00
+    assert "₹0.00220000" in text, "Entry / average entry must retain full 8-decimal precision"
+    assert "₹0.00218000" in text, "Current market price must retain full 8-decimal precision"
+    assert "909090" in text, "Holding quantity must be intact"
+    assert "₹-18.18" in text, "Unrealized P&L must be calculated accurately"
+
+
+# ===========================================================================
+# 12. STOPPED-GRID POSITION ACCOUNTING & LIFECYCLE
+# ===========================================================================
+
+async def test_stopped_grid_position_accounting_and_lifecycle(db, repos):
+    """Verify that stopping a grid preserves its open holdings in DB and allows liquidation."""
+    real_ex = DummyExchange(5000000.0)
+    paper = PaperExchangeClient(real_ex, slippage_bps_max=0.0)
+    om = OrderManager(paper, repos)
+    notifier = Notifier(bot=None, chat_ids=())
+    risk = RiskManager(_risk_settings(), repos)
+    dca = DCAManager(paper, repos, om, notifier, risk)
+
+    # Create active grid with position: 0.0012 BTC @ avg ₹5,000,000 = ₹6,000 invested
+    grid = DCAGridRecord(
+        grid_id="grd_btc_stopped", symbol="BTCINR", status="active", mode="paper",
+        entry_price=5000000.0, base_investment=6000.0, dip_buy_amount=3000.0,
+        dip_percentage=5.0, profit_sell_amount=3000.0, profit_percentage=5.0,
+        max_levels=5, stop_loss_percentage=20.0, current_level=1,
+        total_quantity=0.0012, total_investment=6000.0, average_entry_price=5000000.0,
+        last_buy_price=5000000.0, next_buy_price=4750000.0, next_sell_price=5250000.0,
+        realized_profit=250.0, completed_cycles=1, created_at=now_iso(), updated_at=now_iso(),
+    )
+    await repos.grids.create(grid)
+
+    # Stop grid
+    await dca.stop_grid("grd_btc_stopped", reason="manual_test")
+
+    # Verify grid state in DB is STOPPED but holding and investment remain intact
+    g = await repos.grids.get("grd_btc_stopped")
+    assert g["status"] == "stopped"
+    assert g["total_quantity"] == 0.0012
+    assert g["total_investment"] == 6000.0
+    assert g["average_entry_price"] == 5000000.0
+    assert g["realized_profit"] == 250.0
+
+    # Verify portfolio totals include stopped grid
+    prices = {"BTCINR": 5100000.0}
+    totals = portfolio_totals([g], prices)
+    assert totals["total_realized"] == 250.0
+    assert totals["total_invested"] == 6000.0
+    expected_unrealized = (5100000.0 - 5000000.0) * 0.0012
+    assert totals["total_unrealized"] == pytest.approx(expected_unrealized)
+
+    # Verify recovery does not mutate or erase stopped grid
+    rec = RecoveryManager(paper, repos, notifier, dca)
+    report = await rec.recover()
+    assert report["reconciled_orders"] == 0
+
+    g_rec = await repos.grids.get("grd_btc_stopped")
+    assert g_rec["status"] == "stopped"
+    assert g_rec["total_quantity"] == 0.0012
+    assert g_rec["total_investment"] == 6000.0
+
+
+# ===========================================================================
+# 13. MULTI-LEVEL CAPITAL & RISK LADDER ACCOUNTING
+# ===========================================================================
+
+async def test_multi_level_capital_risk_accounting_and_ladder_exposure(db, repos):
+    """Audit TRUMP-style scenario: Level 4 of 10.
+    Verify maximum committed exposure across full ladder, per-coin caps, and risk blocking."""
+    risk_settings = RiskSettings(
+        max_total_capital=10000.0,
+        max_capital_per_coin=9000.0,
+        max_simultaneous_grids=5,
+        min_wallet_balance=1000.0,
+        daily_loss_limit=1000.0,
+    )
+    risk = RiskManager(risk_settings, repos)
+
+    # Grid TRUMP: base 250 + 9 dips * 250 = 2500 max commitment
+    # Currently at Level 4: total_investment = 1000, 6 dips remaining = 1500 future commitment
+    # Total committed for this grid = 1000 + 1500 = 2500
+    trump_grid = DCAGridRecord(
+        grid_id="grd_trump_lvl4", symbol="TRUMPINR", status="active", mode="paper",
+        entry_price=258.16, base_investment=250.0, dip_buy_amount=250.0,
+        dip_percentage=5.0, profit_sell_amount=250.0, profit_percentage=5.0,
+        max_levels=10, stop_loss_percentage=20.0, current_level=4,
+        total_quantity=3.8735, total_investment=1000.0, average_entry_price=258.16,
+        last_buy_price=245.0, next_buy_price=232.75, next_sell_price=271.06,
+        realized_profit=0.0, completed_cycles=0, created_at=now_iso(), updated_at=now_iso(),
+    )
+    await repos.grids.create(trump_grid)
+
+    # Check new grid starting capital check:
+    # Existing committed: 1000 (spent) + 6 * 250 (future) = 2500.
+    # Max total capital: 10000. Remaining allowance = 7500.
+    # Attempting a grid with 8000 commitment must be rejected:
+    res_rejected = await risk.check_can_start_grid("SOLINR", 8000.0, wallet_inr_balance=15000.0)
+    assert not res_rejected.allowed
+    assert "Total capital limit" in res_rejected.reason
+
+    # Attempting a grid within allowance (e.g. 2000 <= 7500 and 2000 <= max_per_coin 3000):
+    res_allowed = await risk.check_can_start_grid("SOLINR", 2000.0, wallet_inr_balance=15000.0)
+    assert res_allowed.allowed
+
+    # Emergency stop blocks order placement across any level
+    await risk.trigger_emergency_stop()
+    order_res = await risk.check_can_place_order(250.0, wallet_inr_balance=15000.0)
+    assert not order_res.allowed
+    assert "Emergency stop" in order_res.reason
+    await risk.clear_emergency_stop()

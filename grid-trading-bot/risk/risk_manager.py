@@ -87,20 +87,27 @@ class RiskManager:
                 f"limit of ₹{self._settings.max_capital_per_coin:,.2f}.",
             )
 
+        all_grids = await self._repos.grids.list_all()
+
         def _max_committed(g: dict) -> float:
-            """Already-spent INR plus the full remaining DCA ladder the grid could still buy.
+            """Already-spent INR plus the full remaining DCA ladder the grid could still buy."""
+            spent = float(g.get("total_investment") or 0)
+            status = g.get("status")
+            if status in (GridStatus.ACTIVE.value, GridStatus.PAUSED.value):
+                curr_lvl = int(g.get("current_level") or 0)
+                max_lvl = int(g.get("max_levels") or 1)
+                dip_amount = float(g.get("dip_buy_amount") or 0)
+                if curr_lvl == 0:
+                    base_inv = float(g.get("base_investment") or 0)
+                    return base_inv + dip_amount * max(0, max_lvl - 1)
+                future = dip_amount * max(0, max_lvl - curr_lvl)
+                return spent + future
+            elif status == GridStatus.STOPPED.value:
+                # Stopped grids with held coins retain their invested capital
+                return spent if float(g.get("total_quantity") or 0) > 0 else 0.0
+            return 0.0
 
-            current_level increments on every buy fill (including the initial entry),
-            and dip buys fire while current_level < max_levels, so remaining dips =
-            max(0, max_levels - current_level).
-            """
-            spent = float(g["total_investment"] or 0)
-            future = float(g["dip_buy_amount"] or 0) * max(
-                0, int(g["max_levels"]) - int(g["current_level"])
-            )
-            return spent + future
-
-        total_committed = sum(_max_committed(g) for g in active_grids)
+        total_committed = sum(_max_committed(g) for g in all_grids)
         if total_committed + planned_investment > self._settings.max_total_capital:
             return RiskCheckResult(
                 False,

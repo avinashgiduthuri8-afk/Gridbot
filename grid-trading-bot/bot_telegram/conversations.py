@@ -294,7 +294,7 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
                 if price <= 0:
                     raise ValueError
                 context.user_data["entry_price"] = price
-                price_label = f"₹{price:,.2f}"
+                price_label = fmt_price(price)
             except ValueError:
                 await update.message.reply_text(
                     "Please enter a valid price (e.g. 54000), or type 0 for market price."
@@ -532,7 +532,7 @@ def build_newgrid_conversation(app_context: "BotAppContext") -> ConversationHand
         produce an identical confirmation screen from the same user_data
         shape."""
         mode_label = "🟢 Paper Trade" if d.get("mode") == "paper" else "🔴 Real Trade"
-        price_label = f"₹{d['entry_price']:,.2f}" if d["entry_price"] > 0 else "market price"
+        price_label = fmt_price(d['entry_price']) if d["entry_price"] > 0 else "market price"
         total_possible = d["base_investment"] + d["dip_buy_amount"] * (d["max_levels"] - 1)
         trailing_line = (
             f"Trailing take-profit: {d['trailing_percentage']}% pullback\n"

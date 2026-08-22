@@ -30,7 +30,7 @@ from bot_telegram.keyboards import (
     restore_confirm_keyboard,
     restorelist_pagination_keyboard,
 )
-from utils.helpers import now_iso
+from utils.helpers import fmt_price, now_iso
 from utils.logger import get_logger
 
 log = get_logger("telegram")
@@ -915,7 +915,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
 
         try:
             ticker = await app_context.exchange.get_ticker(grid["symbol"])
-            price_line = f"Current price: {ticker.last_price:,.2f}\n"
+            price_line = f"Current price: {fmt_price(ticker.last_price)}\n"
         except Exception:  # noqa: BLE001
             price_line = ""
 
@@ -1104,9 +1104,9 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
         shown = fmt.format(value) if fmt != "{}" or field != "trailing_enabled" else str(value)
         extra_note = ""
         if field == "dip_percentage":
-            extra_note = f"\nNext dip-buy price updated to ₹{updated_grid['next_buy_price']:,.2f}."
+            extra_note = f"\nNext dip-buy price updated to {fmt_price(updated_grid['next_buy_price'])}."
         elif field == "profit_percentage":
-            extra_note = f"\nNext profit-sell price updated to ₹{updated_grid['next_sell_price']:,.2f}."
+            extra_note = f"\nNext profit-sell price updated to {fmt_price(updated_grid['next_sell_price'])}."
         elif field == "max_levels" and updated_grid["current_level"] >= value:
             extra_note = "\n⚠️ Current level already meets or exceeds this — no further dip buys will occur."
 
@@ -1251,7 +1251,7 @@ def register_handlers(app, app_context: "BotAppContext") -> None:  # noqa: F821
         for a in alerts:
             arrow = "📈" if a.direction == "above" else "📉"
             lines.append(
-                f"{arrow} <b>{a.symbol}</b> — ₹{a.target_price:,.2f} "
+                f"{arrow} <b>{a.symbol}</b> — {fmt_price(a.target_price)} "
                 f"({a.direction}) set {a.set_at[:10]}"
             )
         await update.message.reply_text("\n".join(lines), parse_mode="HTML")

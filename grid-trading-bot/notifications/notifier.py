@@ -242,7 +242,7 @@ class Notifier:
             f"{side_emoji} <b>Order Submitted</b> [{mode_tag}]\n"
             f"Coin: <b>{symbol}</b> | Grid: <code>{grid_id}</code>\n"
             f"Order: <code>{order_id}</code> | Side: {side.upper()}\n"
-            f"Qty: {quantity:.6f} @ ₹{price:,.2f}"
+            f"Qty: {quantity:.8g} @ {fmt_price(price)}"
         )
 
     async def partial_fill_received(
@@ -263,8 +263,8 @@ class Notifier:
             f"⏳ <b>Partial Fill</b> [{mode_tag}]\n"
             f"Coin: <b>{symbol}</b> | Grid: <code>{grid_id}</code>\n"
             f"Order: <code>{order_id}</code> | Side: {side.upper()}\n"
-            f"Filled: {filled_qty:.6f} of {total_qty:.6f} ({pct:.1f}%) @ ₹{fill_price:,.2f}\n"
-            f"Remaining: {remaining:.6f}"
+            f"Filled: {filled_qty:.8g} of {total_qty:.8g} ({pct:.1f}%) @ {fmt_price(fill_price)}\n"
+            f"Remaining: {remaining:.8g}"
         )
 
     async def order_cancelled(
@@ -440,7 +440,7 @@ class Notifier:
             qty = float(o.get("quantity", 0))
             price = float(o.get("price", 0))
             ex_id = o.get("exchange_order_id", "?")
-            price_str = f" @ ₹{price:,.4f}" if price > 0 else ""
+            price_str = f" @ {fmt_price(price)}" if price > 0 else ""
             lines.append(
                 f"• {side} {symbol} qty {qty:.8g}{price_str}\n"
                 f"  Exchange ID: <code>{ex_id}</code>"

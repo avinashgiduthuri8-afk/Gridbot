@@ -116,7 +116,7 @@ def format_wallet_balance(
                     total_unrealized += unrealized
                     pnl_arrow = "📈" if unrealized >= 0 else "📉"
                     pnl_part = (
-                        f"Bot position: {bot_qty:.8g} @ avg ₹{bot_avg:,.2f} "
+                        f"Bot position: {bot_qty:.8g} @ avg {fmt_price(bot_avg)} "
                         f"| P&L: {pnl_arrow} ₹{unrealized:+,.2f}"
                     )
 
@@ -125,7 +125,7 @@ def format_wallet_balance(
                     f"\n    Available:     {b.balance:.8g}"
                     f"\n    Locked:        {b.locked_balance:.8g}"
                     f"\n    Total:         {total_qty:.8g}"
-                    f"\n    Market price:  ₹{price:,.2f}"
+                    f"\n    Market price:  {fmt_price(price)}"
                     f"\n    Market value:  ₹{value_inr:,.2f}"
                     + (f"\n    {pnl_part.strip()}" if pnl_part else "")
                 )
@@ -191,7 +191,7 @@ def format_coin_info(
         f"Status: {'✅ Active' if market_info.is_active else '🚫 ' + market_info.status.upper()}",
         "",
         "<b>Market Data (24h)</b>",
-        f"  Price:      ₹{extended_ticker.last_price:,.4f}",
+        f"  Price:      {fmt_price(extended_ticker.last_price, market_info.base_currency_precision)}",
         f"  Change:     {change_arrow} {extended_ticker.change_24h:+.2f}%",
     ]
     if extended_ticker.high_24h > 0:
@@ -212,7 +212,7 @@ def format_coin_info(
         f"  Qty precision:    {market_info.target_currency_precision} decimals",
         f"  Price precision:  {market_info.base_currency_precision} decimals",
         "",
-        f"<b>Investment Validation</b>  (at ₹{extended_ticker.last_price:,.2f})",
+        f"<b>Investment Validation</b>  (at {fmt_price(extended_ticker.last_price, market_info.base_currency_precision)})",
         f"  Using default amounts — /coininfo uses bot defaults:",
         _val_line(f"Base investment  (₹{DEFAULT_BASE_INVESTMENT:,.0f})", base_validation),
         _val_line(f"Dip buy amount   (₹{DEFAULT_DIP_BUY_AMOUNT:,.0f})", dip_validation),
@@ -305,7 +305,7 @@ def format_daily_summary(
         lines.append("")
         for g in active_grids:
             avg = g["average_entry_price"]
-            avg_part = f" avg ₹{avg:,.2f}" if avg > 0 else ""
+            avg_part = f" avg {fmt_price(avg)}" if avg > 0 else ""
             lines.append(
                 f"• <b>{g['symbol']}</b> ({g['status']}) lvl {g['current_level']}/{g['max_levels']}"
                 f"{avg_part} — net ₹{g['realized_profit']:,.2f} profit"
@@ -363,7 +363,7 @@ def format_paper_grids(grids: list[dict], prices: dict[str, float]) -> str:
                 unrealized = unrealized_pnl(current, avg, qty)
                 total_unrealized += unrealized
                 price_note = (
-                    f"\n    Current: ₹{current:,.2f} | "
+                    f"\n    Current: {fmt_price(current)} | "
                     f"Unrealized: {_format_pnl_with_pct(unrealized, invested)}"
                 )
 
@@ -371,12 +371,12 @@ def format_paper_grids(grids: list[dict], prices: dict[str, float]) -> str:
         lines.append(
             f"{emoji} <b>{symbol}</b> — <code>{g['grid_id']}</code>\n"
             f"    Status: {status.upper()} | Level: {g['current_level']}/{g['max_levels']}\n"
-            f"    Entry: ₹{g['entry_price']:,.2f} | Dip: {g['dip_percentage']}% | "
+            f"    Entry: {fmt_price(g['entry_price'])} | Dip: {g['dip_percentage']}% | "
             f"Profit: {g['profit_percentage']}%\n"
             f"    Net realized P&amp;L: {_format_pnl_with_pct(realized, invested)} ({cycles} sell cycle(s))\n"
             f"    Net total P&amp;L: {_format_pnl_with_pct(combined, invested)}"
             + (
-                f"\n    Holding: {qty:.6f} coins @ avg ₹{avg:,.2f}"
+                f"\n    Holding: {qty:.8g} coins @ avg {fmt_price(avg)}"
                 + price_note
                 if qty > 0 else ""
             )
