@@ -184,6 +184,80 @@ export interface BacktestReportResponse {
   outcomes: BacktestOutcomeResponse[];
 }
 
+export interface StrategyMetadata {
+  id: string;
+  name: string;
+  description: string;
+  default_t1_rr: number;
+  default_t2_rr: number;
+}
+
+export interface StrategyBacktestTrade {
+  trade_id: string;
+  symbol: string;
+  strategy: string;
+  entry_date: string;
+  entry_price: number;
+  exit_date: string;
+  exit_price: number;
+  exit_reason: 'HIT_T1' | 'HIT_T2' | 'STOPPED_OUT' | 'TRAILING_SL' | 'TIMEOUT' | string;
+  shares: number;
+  pnl_amount: number;
+  pnl_pct: number;
+  r_multiple: number;
+  holding_days: number;
+  is_win: boolean;
+  stop_loss: number;
+  target_1: number;
+  target_2: number;
+}
+
+export interface EquityCurvePoint {
+  date: string;
+  portfolio_value: number;
+  benchmark_value: number;
+  drawdown_pct: number;
+}
+
+export interface StrategyBacktestResponse {
+  symbol: string;
+  strategy: string;
+  start_date: string;
+  end_date: string;
+  initial_capital: number;
+  final_capital: number;
+  net_pnl_amount: number;
+  net_pnl_pct: number;
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  win_rate_pct: number;
+  profit_factor: number;
+  expectancy_r: number;
+  max_drawdown_pct: number;
+  sharpe_ratio: number;
+  avg_winner_amount: number;
+  avg_loser_amount: number;
+  max_win_streak: number;
+  max_loss_streak: number;
+  avg_holding_days: number;
+  equity_curve: EquityCurvePoint[];
+  trades: StrategyBacktestTrade[];
+}
+
+export interface StrategyBacktestRequest {
+  symbol?: string;
+  universe?: string;
+  strategy?: string;
+  lookback_bars?: number;
+  initial_capital?: number;
+  risk_pct_per_trade?: number;
+  target_1_rr?: number;
+  target_2_rr?: number;
+  use_trailing_sl?: boolean;
+  max_holding_bars?: number;
+}
+
 export interface SignalPerformanceStats {
   total_signals: number;
   winning_signals: number;

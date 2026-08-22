@@ -3,7 +3,6 @@ import type {
   MarketRegimeResponse,
   SectorMatrixResponse,
   ScanResponse,
-  BacktestReportResponse,
   SignalPerformanceStats,
   SessionInfo,
   ScoredSignalResponse,
@@ -101,10 +100,13 @@ export const api = {
   getSignalPerformance: () =>
     fetchApi<SignalPerformanceStats>('/signals/performance'),
 
-  runBacktest: (universe = 'NIFTY_50', lookbackBars = 60) =>
-    fetchApi<BacktestReportResponse>('/backtest/run', {
+  getStrategies: () =>
+    fetchApi<any[]>('/backtest/strategies'),
+
+  runBacktest: (params: any = {}) =>
+    fetchApi<any>('/backtest/run', {
       method: 'POST',
-      body: JSON.stringify({ universe, lookback_bars: lookbackBars }),
+      body: JSON.stringify(typeof params === 'string' ? { universe: params } : params),
     }),
 
   // Stock Fundamentals & NSE Delivery APIs
