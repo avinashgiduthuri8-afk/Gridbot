@@ -46,6 +46,7 @@ def dashboard_client(tmp_path, monkeypatch):
     writer_db = Database(db_path)
     _seed(writer_db.connect(), writer_db.migrate())
     monkeypatch.setenv("DATABASE_PATH", db_path)
+    monkeypatch.setenv("DASHBOARD_READ_ONLY", "true")
     app = create_app()
     with TestClient(app) as client:
         app.state.seed_repos = Repositories(writer_db)
@@ -118,6 +119,7 @@ def test_dashboard_startup_does_not_migrate_database(tmp_path, monkeypatch):
     db_path = str(tmp_path / "dashboard_unmigrated.db")
     open(db_path, "w").close()
     monkeypatch.setenv("DATABASE_PATH", db_path)
+    monkeypatch.setenv("DASHBOARD_READ_ONLY", "true")
 
     app = create_app()
     with TestClient(app) as client:
@@ -141,6 +143,7 @@ def test_dashboard_handles_missing_database_gracefully(tmp_path, monkeypatch):
     """
     db_path = str(tmp_path / "nonexistent.db")
     monkeypatch.setenv("DATABASE_PATH", db_path)
+    monkeypatch.setenv("DASHBOARD_READ_ONLY", "true")
 
     app = create_app()
     with TestClient(app) as client:
@@ -165,6 +168,7 @@ def test_dashboard_startup_without_trading_credentials(tmp_path, monkeypatch):
     CoinDCX credentials in the environment.
     """
     db_path = str(tmp_path / "dashboard_no_secrets.db")
+    monkeypatch.setenv("DASHBOARD_READ_ONLY", "true")
     writer_db = Database(db_path)
     _seed(writer_db.connect(), writer_db.migrate(), writer_db.close())
 

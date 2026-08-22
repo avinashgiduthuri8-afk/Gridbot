@@ -151,6 +151,10 @@ class PaperExchangeClient(ExchangeClient):
         order_type: str = "market_order",
         client_order_id: str | None = None,
     ) -> ExchangeOrder:
+        if quantity <= 0:
+            raise ValueError(f"Order quantity must be positive, got {quantity}")
+        if price < 0:
+            raise ValueError(f"Order price cannot be negative, got {price}")
         try:
             ticker = await self._real.get_ticker(symbol)
             decision_price = ticker.last_price

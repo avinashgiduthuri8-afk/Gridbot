@@ -4,11 +4,12 @@ Supports both embedded execution inside main.py and standalone deployment.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, APIRouter, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,20 +29,32 @@ async def lifespan(app: FastAPI):
     dashboard_settings = load_dashboard_settings()
     app.state.dashboard_settings = dashboard_settings
     app.state.settings = dashboard_settings
+    read_only = os.getenv("DASHBOARD_READ_ONLY", "false").lower() in ("true", "1")
 
     if not hasattr(app.state, "db") or app.state.db is None:
-        db = Database(dashboard_settings.database_path)
-        try:
-            await db.connect()
-            await db.migrate()
-            app.state.db = db
-            app.state.repos = Repositories(db)
-        except Exception as exc:
-            log.warning("Database initialization in dashboard: %s", exc)
-            app.state.db = None
-            app.state.repos = None
+        if read_only:
+            db = Database(dashboard_settings.database_path, read_only=True)
+            try:
+                await db.connect()
+                app.state.db = db
+                app.state.repos = Repositories(db)
+            except FileNotFoundError:
+                log.warning("Database not found. Dashboard will return 503 until bot creates it.")
+                app.state.db = None
+                app.state.repos = None
+        else:
+            db = Database(dashboard_settings.database_path)
+            try:
+                await db.connect()
+                await db.migrate()
+                app.state.db = db
+                app.state.repos = Repositories(db)
+            except Exception as exc:
+                log.warning("Database initialization in dashboard: %s", exc)
+                app.state.db = None
+                app.state.repos = None
 
-    if app.state.repos is not None and (not hasattr(app.state, "dca_manager") or app.state.dca_manager is None):
+    if not read_only and app.state.repos is not None and (not hasattr(app.state, "dca_manager") or app.state.dca_manager is None):
         try:
             from config.settings import load_settings
             from exchange.coindcx import CoinDCXClient
@@ -96,6 +109,8 @@ def create_app() -> FastAPI:
     )
 
     dashboard_settings = load_dashboard_settings()
+    read_only = os.getenv("DASHBOARD_READ_ONLY", "false").lower() in ("true", "1")
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=dashboard_settings.cors_origins,
@@ -112,7 +127,16 @@ def create_app() -> FastAPI:
         )
 
     for router_module in (health, grids, positions, orders, trade_history, portfolio, analytics, settings):
-        app.include_router(router_module.router, prefix="/api")
+        if read_only:
+            # Filter out non-GET routes in strict read-only mode
+            ro_router = APIRouter()
+            for route in router_module.router.routes:
+                methods = getattr(route, "methods", set()) or set()
+                if methods.issubset({"GET", "HEAD", "OPTIONS"}):
+                    ro_router.routes.append(route)
+            app.include_router(ro_router, prefix="/api")
+        else:
+            app.include_router(router_module.router, prefix="/api")
 
     static_dir = dashboard_settings.static_dir
     index_path = Path(static_dir) / "index.html" if static_dir else None
